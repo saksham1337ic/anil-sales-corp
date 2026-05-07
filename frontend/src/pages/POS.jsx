@@ -164,9 +164,9 @@ export default function POS() {
     }
 
     return (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
             {/* LEFT: catalog */}
-            <div className="lg:col-span-2 space-y-5">
+            <div className="lg:col-span-3 space-y-5">
                 <div className="flex flex-col sm:flex-row sm:items-center gap-3">
                     <div className="relative flex-1">
                         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -202,7 +202,7 @@ export default function POS() {
                     ))}
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4">
                     {products.map((p) => {
                         const low = p.stock <= p.low_stock_threshold;
                         const out = p.stock <= 0;
@@ -252,12 +252,15 @@ export default function POS() {
             </div>
 
             {/* RIGHT: cart */}
-            <div className="lg:sticky lg:top-24 self-start">
-                <div className="panel flex flex-col overflow-hidden" style={{ maxHeight: "calc(100vh - 8rem)" }}>
+            <div className="lg:col-span-2 lg:sticky lg:top-24 self-start">
+                <div className="panel flex flex-col overflow-hidden" style={{ maxHeight: "calc(100vh - 7rem)" }}>
                     <div className="px-5 pt-5 pb-3 border-b border-border flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                            <ShoppingCart size={18} className="text-primary" />
-                            <h3 className="font-heading text-base font-semibold">Current Sale</h3>
+                            <ShoppingCart size={20} className="text-primary" />
+                            <h3 className="font-heading text-lg font-semibold">Current Sale</h3>
+                            {cart.length > 0 && (
+                                <Badge variant="outline" className="ml-1 bg-primary/10 text-primary border-primary/30 font-mono">{cart.reduce((s, x) => s + x.qty, 0)}</Badge>
+                            )}
                         </div>
                         {cart.length > 0 && (
                             <button
@@ -297,42 +300,44 @@ export default function POS() {
                     {/* items */}
                     <div className="flex-1 overflow-auto scroll-fade px-5 py-3">
                         {cart.length === 0 && (
-                            <div className="py-10 text-center text-sm text-muted-foreground">
-                                <ShoppingCart size={28} className="mx-auto mb-2 opacity-40" />
-                                Tap a product to add
+                            <div className="py-14 text-center text-sm text-muted-foreground">
+                                <ShoppingCart size={32} className="mx-auto mb-3 opacity-40" />
+                                <div className="font-medium">Cart is empty</div>
+                                <div className="text-xs mt-1">Tap a product to add it</div>
                             </div>
                         )}
                         {cart.map((x) => (
-                            <div key={x.id} className="flex items-start gap-3 py-3 border-b border-border last:border-0" data-testid={`pos-cart-item-${x.sku}`}>
+                            <div key={x.id} className="flex items-start gap-3 py-3.5 border-b border-border last:border-0" data-testid={`pos-cart-item-${x.sku}`}>
                                 <div className="flex-1 min-w-0">
-                                    <div className="text-sm font-medium leading-tight truncate">{x.name}</div>
-                                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground mt-0.5">{x.sku}</div>
-                                    <div className="flex items-center gap-2 mt-2">
+                                    <div className="text-sm font-medium leading-snug">{x.name}</div>
+                                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground mt-1 font-mono">{x.sku}</div>
+                                    <div className="flex items-center gap-2 mt-2.5">
                                         <div className="flex items-center bg-muted/40 rounded-md border border-border">
-                                            <button onClick={() => updateQty(x.id, -1)} className="px-2 py-1 hover:text-primary"><Minus size={12} /></button>
+                                            <button onClick={() => updateQty(x.id, -1)} className="px-2.5 py-1.5 hover:text-primary"><Minus size={13} /></button>
                                             <Input
                                                 value={x.qty}
                                                 onChange={(e) => {
                                                     const n = Math.max(1, Math.min(Number(e.target.value) || 1, x.stock));
                                                     setLine(x.id, { qty: n });
                                                 }}
-                                                className="w-12 h-7 text-center bg-transparent border-0 px-0 text-sm focus-visible:ring-0"
+                                                className="w-12 h-8 text-center bg-transparent border-0 px-0 text-sm font-medium focus-visible:ring-0"
                                                 data-testid={`pos-cart-qty-${x.sku}`}
                                             />
-                                            <button onClick={() => updateQty(x.id, +1)} className="px-2 py-1 hover:text-primary"><Plus size={12} /></button>
+                                            <button onClick={() => updateQty(x.id, +1)} className="px-2.5 py-1.5 hover:text-primary"><Plus size={13} /></button>
                                         </div>
+                                        <span className="text-xs text-muted-foreground">×</span>
                                         <Input
                                             type="number"
                                             value={x.price}
                                             onChange={(e) => setLine(x.id, { price: Number(e.target.value) || 0 })}
-                                            className="w-24 h-7 bg-muted/40 border-border text-xs"
+                                            className="w-24 h-8 bg-muted/40 border-border text-xs"
                                             placeholder="Price"
                                         />
                                     </div>
                                 </div>
-                                <div className="text-right shrink-0">
-                                    <div className="font-heading font-semibold text-sm">{fmtINR(x.qty * x.price - (x.discount || 0))}</div>
-                                    <button onClick={() => removeFromCart(x.id)} className="mt-1 text-muted-foreground hover:text-destructive">
+                                <div className="text-right shrink-0 flex flex-col items-end gap-1.5 min-w-[5.5rem]">
+                                    <div className="font-heading font-semibold text-base text-primary">{fmtINR(x.qty * x.price - (x.discount || 0))}</div>
+                                    <button onClick={() => removeFromCart(x.id)} className="text-muted-foreground hover:text-destructive">
                                         <Trash2 size={14} />
                                     </button>
                                 </div>
