@@ -164,9 +164,9 @@ export default function POS() {
     }
 
     return (
-        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-11 gap-6">
             {/* LEFT: catalog */}
-            <div className="lg:col-span-3 space-y-5">
+            <div className="lg:col-span-6 space-y-5">
                 <div className="flex flex-col sm:flex-row sm:items-center gap-3">
                     <div className="relative flex-1">
                         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -202,7 +202,7 @@ export default function POS() {
                     ))}
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
                     {products.map((p) => {
                         const low = p.stock <= p.low_stock_threshold;
                         const out = p.stock <= 0;
@@ -252,14 +252,16 @@ export default function POS() {
             </div>
 
             {/* RIGHT: cart */}
-            <div className="lg:col-span-2 lg:sticky lg:top-24 self-start">
-                <div className="panel flex flex-col overflow-hidden" style={{ maxHeight: "calc(100vh - 7rem)" }}>
-                    <div className="px-5 pt-5 pb-3 border-b border-border flex items-center justify-between">
+            <div className="lg:col-span-5 lg:sticky lg:top-20 self-start">
+                <div className="panel flex flex-col overflow-hidden" style={{ height: "calc(100vh - 6rem)" }}>
+                    <div className="px-5 pt-4 pb-3 border-b border-border flex items-center justify-between shrink-0">
                         <div className="flex items-center gap-2">
-                            <ShoppingCart size={20} className="text-primary" />
-                            <h3 className="font-heading text-lg font-semibold">Current Sale</h3>
+                            <ShoppingCart size={18} className="text-primary" />
+                            <h3 className="font-heading text-base font-semibold">Current Sale</h3>
                             {cart.length > 0 && (
-                                <Badge variant="outline" className="ml-1 bg-primary/10 text-primary border-primary/30 font-mono">{cart.reduce((s, x) => s + x.qty, 0)}</Badge>
+                                <Badge variant="outline" className="ml-1 bg-primary/10 text-primary border-primary/30 font-mono text-[10px]">
+                                    {cart.reduce((s, x) => s + x.qty, 0)} pcs
+                                </Badge>
                             )}
                         </div>
                         {cart.length > 0 && (
@@ -274,25 +276,25 @@ export default function POS() {
                     </div>
 
                     {/* customer */}
-                    <div className="px-5 py-3 border-b border-border space-y-2">
-                        <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-muted-foreground">
-                            <User size={13} /> Customer
+                    <div className="px-5 py-2.5 border-b border-border space-y-2 shrink-0">
+                        <div className="flex items-center gap-2">
+                            <User size={13} className="text-muted-foreground shrink-0" />
+                            <Select value={customerId} onValueChange={setCustomerId}>
+                                <SelectTrigger className="h-8 bg-muted/30 border-border text-sm" data-testid="pos-customer-select">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent className="bg-popover border-border max-h-72">
+                                    <SelectItem value="walkin">Walk-in Customer</SelectItem>
+                                    {customers.map((c) => (
+                                        <SelectItem key={c.id} value={c.id}>{c.name} {c.phone ? ` · ${c.phone}` : ""}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
                         </div>
-                        <Select value={customerId} onValueChange={setCustomerId}>
-                            <SelectTrigger className="h-9 bg-muted/30 border-border" data-testid="pos-customer-select">
-                                <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent className="bg-popover border-border max-h-72">
-                                <SelectItem value="walkin">Walk-in Customer</SelectItem>
-                                {customers.map((c) => (
-                                    <SelectItem key={c.id} value={c.id}>{c.name} {c.phone ? ` · ${c.phone}` : ""}</SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
                         {customerId === "walkin" && (
                             <div className="grid grid-cols-2 gap-2">
-                                <Input value={walkinName} onChange={(e) => setWalkinName(e.target.value)} placeholder="Name" className="h-9 bg-muted/30 border-border" data-testid="pos-walkin-name" />
-                                <Input value={walkinPhone} onChange={(e) => setWalkinPhone(e.target.value)} placeholder="Phone (optional)" className="h-9 bg-muted/30 border-border" data-testid="pos-walkin-phone" />
+                                <Input value={walkinName} onChange={(e) => setWalkinName(e.target.value)} placeholder="Name" className="h-8 bg-muted/30 border-border text-sm" data-testid="pos-walkin-name" />
+                                <Input value={walkinPhone} onChange={(e) => setWalkinPhone(e.target.value)} placeholder="Phone (optional)" className="h-8 bg-muted/30 border-border text-sm" data-testid="pos-walkin-phone" />
                             </div>
                         )}
                     </div>
@@ -307,38 +309,38 @@ export default function POS() {
                             </div>
                         )}
                         {cart.map((x) => (
-                            <div key={x.id} className="flex items-start gap-3 py-3.5 border-b border-border last:border-0" data-testid={`pos-cart-item-${x.sku}`}>
+                            <div key={x.id} className="flex items-start gap-3 py-2.5 border-b border-border last:border-0" data-testid={`pos-cart-item-${x.sku}`}>
                                 <div className="flex-1 min-w-0">
                                     <div className="text-sm font-medium leading-snug">{x.name}</div>
-                                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground mt-1 font-mono">{x.sku}</div>
-                                    <div className="flex items-center gap-2 mt-2.5">
+                                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground mt-0.5 font-mono">{x.sku}</div>
+                                    <div className="flex items-center gap-2 mt-2">
                                         <div className="flex items-center bg-muted/40 rounded-md border border-border">
-                                            <button onClick={() => updateQty(x.id, -1)} className="px-2.5 py-1.5 hover:text-primary"><Minus size={13} /></button>
+                                            <button onClick={() => updateQty(x.id, -1)} className="px-2 py-1 hover:text-primary"><Minus size={12} /></button>
                                             <Input
                                                 value={x.qty}
                                                 onChange={(e) => {
                                                     const n = Math.max(1, Math.min(Number(e.target.value) || 1, x.stock));
                                                     setLine(x.id, { qty: n });
                                                 }}
-                                                className="w-12 h-8 text-center bg-transparent border-0 px-0 text-sm font-medium focus-visible:ring-0"
+                                                className="w-10 h-7 text-center bg-transparent border-0 px-0 text-sm font-medium focus-visible:ring-0"
                                                 data-testid={`pos-cart-qty-${x.sku}`}
                                             />
-                                            <button onClick={() => updateQty(x.id, +1)} className="px-2.5 py-1.5 hover:text-primary"><Plus size={13} /></button>
+                                            <button onClick={() => updateQty(x.id, +1)} className="px-2 py-1 hover:text-primary"><Plus size={12} /></button>
                                         </div>
                                         <span className="text-xs text-muted-foreground">×</span>
                                         <Input
                                             type="number"
                                             value={x.price}
                                             onChange={(e) => setLine(x.id, { price: Number(e.target.value) || 0 })}
-                                            className="w-24 h-8 bg-muted/40 border-border text-xs"
+                                            className="w-20 h-7 bg-muted/40 border-border text-xs"
                                             placeholder="Price"
                                         />
                                     </div>
                                 </div>
-                                <div className="text-right shrink-0 flex flex-col items-end gap-1.5 min-w-[5.5rem]">
-                                    <div className="font-heading font-semibold text-base text-primary">{fmtINR(x.qty * x.price - (x.discount || 0))}</div>
+                                <div className="text-right shrink-0 flex flex-col items-end gap-1">
+                                    <div className="font-heading font-semibold text-sm text-primary">{fmtINR(x.qty * x.price - (x.discount || 0))}</div>
                                     <button onClick={() => removeFromCart(x.id)} className="text-muted-foreground hover:text-destructive">
-                                        <Trash2 size={14} />
+                                        <Trash2 size={13} />
                                     </button>
                                 </div>
                             </div>
@@ -346,109 +348,106 @@ export default function POS() {
                     </div>
 
                     {/* totals */}
-                    <div className="px-5 py-4 border-t border-border space-y-3 bg-muted/10">
+                    <div className="px-5 py-3 border-t border-border space-y-2.5 bg-muted/10 shrink-0">
                         <div className="flex items-center gap-2">
                             <Tag size={13} className="text-muted-foreground" />
                             <Tabs value={discountType} onValueChange={setDiscountType} className="flex-1">
-                                <TabsList className="h-8 p-0.5 bg-muted/40 border border-border w-full grid grid-cols-2">
-                                    <TabsTrigger value="percent" className="text-xs h-7">%</TabsTrigger>
-                                    <TabsTrigger value="fixed" className="text-xs h-7">₹</TabsTrigger>
+                                <TabsList className="h-7 p-0.5 bg-muted/40 border border-border w-full grid grid-cols-2">
+                                    <TabsTrigger value="percent" className="text-xs h-6">%</TabsTrigger>
+                                    <TabsTrigger value="fixed" className="text-xs h-6">₹</TabsTrigger>
                                 </TabsList>
                             </Tabs>
                             <Input
                                 type="number"
                                 value={discountValue}
                                 onChange={(e) => setDiscountValue(e.target.value)}
-                                className="w-20 h-8 bg-muted/30 border-border text-xs"
+                                className="w-20 h-7 bg-muted/30 border-border text-xs"
                                 placeholder="0"
                                 data-testid="pos-discount-input"
                             />
                         </div>
 
-                        <div className="space-y-1.5 text-sm">
+                        <div className="space-y-1 text-sm">
                             <div className="flex justify-between text-muted-foreground"><span>Subtotal</span><span>{fmtINR(totals.subtotal)}</span></div>
                             <div className="flex justify-between text-muted-foreground"><span>Discount</span><span>-{fmtINR(totals.disc)}</span></div>
                             {isDelivery && (
-                                <div className="flex justify-between text-secondary"><span>Delivery charges</span><span>+{fmtINR(totals.delivery)}</span></div>
+                                <div className="flex justify-between text-secondary"><span>Delivery</span><span>+{fmtINR(totals.delivery)}</span></div>
                             )}
                             {isLabour && (
-                                <div className="flex justify-between text-amber-400"><span>Labour charges</span><span>+{fmtINR(totals.labour)}</span></div>
+                                <div className="flex justify-between text-amber-400"><span>Labour</span><span>+{fmtINR(totals.labour)}</span></div>
                             )}
-                            <div className="flex justify-between font-heading text-lg font-semibold pt-1.5 border-t border-border" data-testid="pos-cart-total">
+                            <div className="flex justify-between font-heading text-lg font-semibold pt-1 border-t border-border" data-testid="pos-cart-total">
                                 <span>Total</span><span className="text-primary">{fmtINR(totals.total)}</span>
                             </div>
                         </div>
 
-                        <div className="rounded-md border border-border bg-muted/20 p-3 space-y-2">
-                            <label className="flex items-center gap-2 cursor-pointer">
+                        {/* compact extras: delivery + labour as inline checkboxes */}
+                        <div className="flex items-center gap-4 text-sm">
+                            <label className="flex items-center gap-1.5 cursor-pointer">
                                 <Checkbox
                                     checked={isDelivery}
                                     onCheckedChange={(v) => setIsDelivery(!!v)}
                                     data-testid="pos-delivery-checkbox"
                                 />
-                                <span className="text-sm font-medium flex items-center gap-1.5">
-                                    <Truck size={14} className="text-secondary" /> Home delivery
-                                </span>
+                                <Truck size={13} className="text-secondary" />
+                                <span className="font-medium">Delivery</span>
                             </label>
-                            {isDelivery && (
-                                <div className="space-y-2 pt-1 animate-in-up">
-                                    <Textarea
-                                        rows={2}
-                                        value={deliveryAddress}
-                                        onChange={(e) => setDeliveryAddress(e.target.value)}
-                                        placeholder="Delivery address"
-                                        className="bg-card border-border text-sm"
-                                        data-testid="pos-delivery-address"
-                                    />
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-xs uppercase tracking-wider text-muted-foreground shrink-0">Charges</span>
-                                        <Input
-                                            type="number"
-                                            value={deliveryCharges}
-                                            onChange={(e) => setDeliveryCharges(e.target.value)}
-                                            placeholder="0"
-                                            className="h-8 bg-card border-border text-sm"
-                                            data-testid="pos-delivery-charges"
-                                        />
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-
-                        <div className="rounded-md border border-border bg-muted/20 p-3 space-y-2">
-                            <label className="flex items-center gap-2 cursor-pointer">
+                            <label className="flex items-center gap-1.5 cursor-pointer">
                                 <Checkbox
                                     checked={isLabour}
                                     onCheckedChange={(v) => setIsLabour(!!v)}
                                     data-testid="pos-labour-checkbox"
                                 />
-                                <span className="text-sm font-medium flex items-center gap-1.5">
-                                    <Wrench size={14} className="text-amber-400" /> Labour / installation
-                                </span>
+                                <Wrench size={13} className="text-amber-400" />
+                                <span className="font-medium">Labour</span>
                             </label>
-                            {isLabour && (
-                                <div className="space-y-2 pt-1 animate-in-up">
-                                    <Input
-                                        value={labourDescription}
-                                        onChange={(e) => setLabourDescription(e.target.value)}
-                                        placeholder="Description (e.g. Plumbing fix, fitting…)"
-                                        className="h-8 bg-card border-border text-sm"
-                                        data-testid="pos-labour-description"
-                                    />
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-xs uppercase tracking-wider text-muted-foreground shrink-0">Charges</span>
-                                        <Input
-                                            type="number"
-                                            value={labourCharges}
-                                            onChange={(e) => setLabourCharges(e.target.value)}
-                                            placeholder="0"
-                                            className="h-8 bg-card border-border text-sm"
-                                            data-testid="pos-labour-charges"
-                                        />
-                                    </div>
-                                </div>
-                            )}
                         </div>
+
+                        {isDelivery && (
+                            <div className="rounded-md border border-border bg-muted/20 p-2.5 space-y-2 animate-in-up">
+                                <Textarea
+                                    rows={2}
+                                    value={deliveryAddress}
+                                    onChange={(e) => setDeliveryAddress(e.target.value)}
+                                    placeholder="Delivery address"
+                                    className="bg-card border-border text-sm"
+                                    data-testid="pos-delivery-address"
+                                />
+                                <div className="flex items-center gap-2">
+                                    <span className="text-[10px] uppercase tracking-wider text-muted-foreground shrink-0">Charges ₹</span>
+                                    <Input
+                                        type="number"
+                                        value={deliveryCharges}
+                                        onChange={(e) => setDeliveryCharges(e.target.value)}
+                                        placeholder="0"
+                                        className="h-7 bg-card border-border text-xs"
+                                        data-testid="pos-delivery-charges"
+                                    />
+                                </div>
+                            </div>
+                        )}
+                        {isLabour && (
+                            <div className="rounded-md border border-border bg-muted/20 p-2.5 space-y-2 animate-in-up">
+                                <Input
+                                    value={labourDescription}
+                                    onChange={(e) => setLabourDescription(e.target.value)}
+                                    placeholder="Description (e.g. Plumbing fix, fitting…)"
+                                    className="h-7 bg-card border-border text-xs"
+                                    data-testid="pos-labour-description"
+                                />
+                                <div className="flex items-center gap-2">
+                                    <span className="text-[10px] uppercase tracking-wider text-muted-foreground shrink-0">Charges ₹</span>
+                                    <Input
+                                        type="number"
+                                        value={labourCharges}
+                                        onChange={(e) => setLabourCharges(e.target.value)}
+                                        placeholder="0"
+                                        className="h-7 bg-card border-border text-xs"
+                                        data-testid="pos-labour-charges"
+                                    />
+                                </div>
+                            </div>
+                        )}
 
                         <div className="grid grid-cols-5 gap-1.5">
                             {PAY_METHODS.map((m) => (
@@ -482,7 +481,7 @@ export default function POS() {
                         <Button
                             onClick={checkout}
                             disabled={submitting || cart.length === 0}
-                            className="w-full h-11 bg-primary hover:bg-primary/90 text-primary-foreground gap-2 shadow-lg shadow-primary/20 font-medium"
+                            className="w-full h-10 bg-primary hover:bg-primary/90 text-primary-foreground gap-2 shadow-lg shadow-primary/20 font-medium"
                             data-testid="pos-checkout-btn"
                         >
                             {submitting ? <Loader2 size={16} className="animate-spin" /> : <ReceiptIcon size={16} />}
