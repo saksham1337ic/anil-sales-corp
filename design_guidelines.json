@@ -1,0 +1,143 @@
+{
+  "project_name": "Anil Sales Corporation - Inventory & POS SaaS",
+  "theme": "dark",
+  "archetype": "Jewel & Luxury mixed with Swiss & High-Contrast (Dark Default)",
+  "design_philosophy": {
+    "vibe": "Premium, Modern, Sexy SaaS-style UI with glassmorphism/subtle gradients, smooth animations, excellent typography, luxury feel",
+    "inspiration": "Linear × Vercel × Notion tailored for an Indian B2B retail context.",
+    "core_principles": [
+      "Use deep Obsidian/Void black for base, with Jade (Emerald) and Cobalt accents. NEVER use the forbidden #1B93A4 teal.",
+      "Generous whitespace, premium bento-box layouts, and card-based structure.",
+      "High-contrast text against dark backgrounds using APCA standards.",
+      "Use 'Outfit' for highly structured, modern headings and 'Manrope' for crisp, legible tabular/body data."
+    ]
+  },
+  "typography": {
+    "google_fonts_import": "@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Outfit:wght@300;400;500;600;700&display=swap');",
+    "font_families": {
+      "heading": "Outfit, sans-serif",
+      "body": "Manrope, sans-serif"
+    },
+    "hierarchy": {
+      "h1": "text-4xl sm:text-5xl font-outfit font-semibold tracking-tight",
+      "h2": "text-2xl sm:text-3xl font-outfit font-semibold tracking-tight",
+      "h3": "text-xl sm:text-2xl font-outfit font-medium",
+      "h4": "text-lg sm:text-xl font-outfit font-medium",
+      "body": "text-base font-manrope leading-relaxed",
+      "small_label": "text-xs font-manrope font-semibold uppercase tracking-[0.2em]"
+    }
+  },
+  "color_palette": {
+    "description": "HSL values for Shadcn UI CSS variables. Base is deep Obsidian (#050505) with 1px glassmorphic borders and Emerald/Cobalt glowing accents.",
+    "dark": {
+      "--background": "240 10% 4%",
+      "--foreground": "0 0% 98%",
+      "--card": "240 10% 6%",
+      "--card-foreground": "0 0% 98%",
+      "--popover": "240 10% 6%",
+      "--popover-foreground": "0 0% 98%",
+      "--primary": "160 84% 39%",
+      "--primary-foreground": "0 0% 100%",
+      "--secondary": "226 71% 40%",
+      "--secondary-foreground": "0 0% 100%",
+      "--muted": "240 10% 12%",
+      "--muted-foreground": "240 5% 65%",
+      "--accent": "240 10% 12%",
+      "--accent-foreground": "0 0% 98%",
+      "--destructive": "0 84% 60%",
+      "--destructive-foreground": "0 0% 98%",
+      "--border": "240 10% 12%",
+      "--input": "240 10% 12%",
+      "--ring": "160 84% 39%",
+      "--radius": "0.75rem"
+    },
+    "light": {
+      "--background": "0 0% 98%",
+      "--foreground": "240 10% 4%",
+      "--card": "0 0% 100%",
+      "--card-foreground": "240 10% 4%",
+      "--popover": "0 0% 100%",
+      "--popover-foreground": "240 10% 4%",
+      "--primary": "160 84% 39%",
+      "--primary-foreground": "0 0% 100%",
+      "--secondary": "226 71% 40%",
+      "--secondary-foreground": "0 0% 100%",
+      "--muted": "240 5% 90%",
+      "--muted-foreground": "240 5% 45%",
+      "--accent": "240 5% 90%",
+      "--accent-foreground": "240 10% 4%",
+      "--destructive": "0 84% 60%",
+      "--destructive-foreground": "0 0% 98%",
+      "--border": "240 6% 90%",
+      "--input": "240 6% 90%",
+      "--ring": "160 84% 39%",
+      "--radius": "0.75rem"
+    }
+  },
+  "spacing_and_layout": {
+    "dashboard": "Bento-grid protocol. grid-cols-1 md:grid-cols-4 lg:grid-cols-4 gap-6. KPI cards (col-span-1). Main Recharts area (col-span-3). Dense but extremely readable padding (p-6 inside cards).",
+    "pos_page": "Split layout. Left side (2/3 width) for quick search and product grid with stock badges. Right side (1/3 width) sticky cart containing line items, customer picker, payment method tabs, and checkout total. Height of cart should be h-[calc(100vh-theme(spacing.24))] sticky at top-24.",
+    "sidebar": "Collapsible Sidebar Nav (Dashboard, POS, Products, Customers, Orders, Analytics, Settings). Dark glass background: bg-background/60 backdrop-blur-xl border-r border-border.",
+    "topbar": "Global search, dark/light toggle, notifications, user avatar. Sticky top-0 z-50 bg-background/80 backdrop-blur-xl border-b border-border h-16 px-6 flex items-center justify-between."
+  },
+  "component_styles": {
+    "buttons": "Shadcn buttons with slight hover lift (-translate-y-[1px]) and shadow-lg. Primary button uses Jade Emerald.",
+    "cards": "Cardless/Subtle roundness approach for data (8px radius max). 1px solid border-border. Hover: slight border color lightening.",
+    "inputs_and_forms": "Solid dark inputs (bg-white/5), 1px border. Focus states MUST have higher contrast ring (ring-2 ring-primary).",
+    "badges": "For stock status. Low Stock (Red/Destructive bg-destructive/20 text-destructive-foreground). In Stock (Emerald bg-primary/20 text-primary).",
+    "modals_drawers": "Use glassmorphic overlay (bg-black/60 backdrop-blur-sm). Drawer for stock adjustments and customer history. Modals for Invoice Preview.",
+    "tables": "Shadcn Tables. Header text small, uppercase, tracking-wider (text-muted-foreground). Row hover effect: bg-muted/50."
+  },
+  "motion_tokens": {
+    "hover": "transition-all duration-200 ease-in-out",
+    "entrance": "framer-motion for staggering list items (staggerChildren: 0.05).",
+    "page_transition": "animate-in fade-in slide-in-from-bottom-4 duration-500"
+  },
+  "key_features_and_data_testid": {
+    "auth": "Login page. data-testid='login-email-input', data-testid='login-submit-button'",
+    "dashboard": "Recharts sales trend line, KPI cards, low stock alerts. data-testid='dashboard-kpi-revenue'",
+    "pos": "Fast product search, customer lookup, discounts, multiple payment tabs (Cash/UPI/Bank/Cheque/Credit). data-testid='pos-search-input', data-testid='pos-add-to-cart-btn', data-testid='pos-checkout-btn'",
+    "invoice": "Invoice preview modal (ASC-YYYYMMDDHHMMSS) with branding, print/PDF download. data-testid='invoice-print-btn'",
+    "products": "CRUD, search/filter, low stock badges, stock-adjust drawer. data-testid='product-add-btn', data-testid='product-table-row'",
+    "customers": "Table with credit limit, balance pills, purchase history drawer. data-testid='customer-balance-badge'",
+    "orders": "Pending -> Dispatched -> Completed status pills. data-testid='order-status-pill'",
+    "analytics": "Recharts: revenue trend area, top products bar, category donut, payment method stacked bar. data-testid='analytics-revenue-chart'"
+  },
+  "media": {
+    "empty_states_and_backgrounds": [
+      {
+        "url": "https://images.unsplash.com/photo-1770745559994-545619d3c3da?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1ODh8MHwxfHNlYXJjaHwzfHxhYnN0cmFjdCUyMGRhcmslMjBsdXh1cnklMjBiYWNrZ3JvdW5kfGVufDB8fHx8MTc3ODEyNTYwMXww&ixlib=rb-4.1.0&q=85",
+        "description": "Abstract dark background with wisps of smoke (Use for Login page background)"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1761437855740-c894da924d79?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1ODh8MHwxfHNlYXJjaHwxfHxhYnN0cmFjdCUyMGRhcmslMjBsdXh1cnklMjBiYWNrZ3JvdW5kfGVufDB8fHx8MTc3ODEyNTYwMXww&ixlib=rb-4.1.0&q=85",
+        "description": "Golden metallic lines against black (Alternative hero/login background)"
+      }
+    ],
+    "placeholder_products_for_pos": [
+      {
+        "url": "https://images.unsplash.com/photo-1773177930292-463ca3c5b86a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxNzV8MHwxfHNlYXJjaHwxfHxsdXh1cnklMjBtb2Rlcm4lMjBmYXVjZXR8ZW58MHx8fHwxNzc4MTI1NjAxfDA&ixlib=rb-4.1.0&q=85",
+        "description": "Close-up of a modern bathtub faucet"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1747227830516-b9643cc377fb?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2Mzl8MHwxfHNlYXJjaHwzfHxtaW5pbWFsaXN0JTIwd2FzaCUyMGJhc2lufGVufDB8fHx8MTc3ODEyNTYwMXww&ixlib=rb-4.1.0&q=85",
+        "description": "Modern bathroom sink with accessories on wooden counter"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1769763917830-7b9c8317329d?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2Mzl8MHwxfHNlYXJjaHwxfHxtaW5pbWFsaXN0JTIwd2FzaCUyMGJhc2lufGVufDB8fHx8MTc3ODEyNTYwMXww&ixlib=rb-4.1.0&q=85",
+        "description": "Modern black oval sink with marble wall and countertop"
+      }
+    ],
+    "icons_strategy": "Use lucide-react for all standard icons (Dashboard, User, Search, Settings, Cart, CreditCard, Banknote, FileText). Size 18px to 20px, stroke-width 1.5 or 2 for a crisp, technical look."
+  },
+  "instructions_to_main_agent": [
+    "1. Replace index.css variables with the HSL values provided in this JSON.",
+    "2. Inject Google Fonts (@import) at the top of index.css and update tailwind.config.js to extend 'outfit' and 'manrope' font families.",
+    "3. Implement the POS page with the split 2/3 and 1/3 layout, ensuring the right cart is sticky.",
+    "4. Use Recharts for the Dashboard and Analytics sections. Ensure line/area charts have proper dark mode stroke/fill colors using the CSS variables (e.g., hsl(var(--primary))).",
+    "5. For the invoice generator, strictly format the invoice number as 'ASC-YYYYMMDDHHMMSS' and make the modal look like a printable A4 sheet.",
+    "6. Build the bento grid dashboard layout prioritizing density and scanning ease (Swiss/High-contrast structural rules).",
+    "7. Add 'data-testid' to ALL interactive elements as requested in testing guidelines.",
+    "8. Ensure glassmorphism is achieved using bg-background/60 backdrop-blur-xl and 1px border where specified."
+  ]
+}
