@@ -15,14 +15,14 @@ Build a complete, production-ready, modern inventory management system for **Ani
 ## What's been implemented (2026-02-09)
 - ✅ JWT auth (login, me, logout) + role-based gating (`admin`/`employee`)
 - ✅ Premium dark UI: glass sidebar, sticky topbar, KPI bento, Outfit/Manrope fonts, emerald + cobalt accents
-- ✅ Dashboard: live KPIs (today / total revenue, low stock, pending), 14-day Recharts area trend, low-stock alerts panel
-- ✅ Point of Sale: product grid + category pills + search, sticky cart, walk-in or saved customer, % / ₹ discount, 5 payment methods (Cash / UPI / Bank / Cheque / Credit), real-time stock validation, ASC-YYYYMMDDHHMMSS invoice on checkout
-- ✅ Invoice PDF: branded reportlab A4 (header, items, totals, status), modal preview + Print + Download
-- ✅ Products: CRUD, search/filter by category, inline low-stock badges, stock-adjust drawer (receipt / return / damage / adjustment)
-- ✅ Customers: CRUD, credit limit & outstanding balance, drawer with order history
-- ✅ Orders: list, status filter (pending / dispatched / completed / cancelled), status transitions, payment recording, invoice view
-- ✅ Analytics (admin-only): revenue trend, top products, payment-method donut, category bars, employee leaderboard. 7/30/90-day toggle.
-- ✅ Backend regression suite (18 tests) and frontend e2e flows verified by testing agent
+- ✅ Dashboard, POS, Products, Customers, Orders, Invoice PDF, Analytics (admin-only)
+
+## Iteration 2 (2026-02-09)
+- ✅ **Tasks for today**: new `/tasks` page + collection. Admin & staff add tasks (title, description, priority, due date), tick to complete. Admin can assign to any user. Stats cards (open / done / overdue). Scopes: Today / My tasks / All. Sidebar nav added.
+- ✅ **Cancel order**: new POST `/api/orders/{id}/cancel` with reason. Restocks every line item (logs `cancellation` movements), reverses customer credit balance, sets status=cancelled. Cancelled orders are excluded from dashboard revenue and analytics. UI: Cancel button on each non-cancelled row in Orders, with confirm dialog showing impact.
+- ✅ **Delivery orders**: checkbox in POS cart → reveals address textarea + delivery charges input. Charges added to total. Order persists `is_delivery`, `delivery_address`, `delivery_charges`. Invoice modal & reportlab PDF render a dedicated DELIVERY ADDRESS section + delivery charges line in totals + a "Delivery Order" badge. Truck icon in Orders list for delivery rows.
+- ✅ **Invoice number race fix**: `make_invoice_no()` now appends a 4-char random suffix → safe against same-second collisions on rapid checkouts.
+- ✅ Backend regression: 27/27 pytest passing (existing 18 + 9 new).
 
 ## Test credentials
 - Admin: `admin@anilsales.com` / `Admin@123`

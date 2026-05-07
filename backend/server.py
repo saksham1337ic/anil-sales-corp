@@ -505,8 +505,11 @@ async def customer_orders(cid: str, user: dict = Depends(get_current_user)):
 # Orders / POS Checkout
 # ---------------------------------------------------------------------------
 def make_invoice_no() -> str:
-    # ASC-YYYYMMDDHHMMSS (UTC)
-    return "ASC-" + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    # ASC-YYYYMMDDHHMMSS + 4-char random suffix to avoid collisions on rapid checkouts
+    import secrets
+    base = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    suffix = secrets.token_hex(2).upper()
+    return f"ASC-{base}{suffix}"
 
 
 @api.post("/pos/checkout", response_model=OrderOut)
