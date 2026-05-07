@@ -10,10 +10,14 @@ import { fmtINR, fmtDate, API_BASE, tokenStore } from "@/lib/api";
 const COMPANY = {
     name: "Anil Sales Corporation",
     tagline: "Sanitary & Plumbing Products",
-    address: "Shop No. 12, Main Market Road, Mumbai, Maharashtra 400001",
-    phone: "+91 98765 43210",
-    email: "contact@anilsales.com",
-    gstin: "27AAAAA0000A1Z5",
+    address: "9 - Cannaught Circus, Hind Samachar Ground, Jalandhar - 144001",
+    phone_office: "0181 2282465",
+    mobile_1: "7696057000",
+    mobile_2: "7696028000",
+    email: "vivek.anilsales@gmail.com",
+    gstin: "03AADFA7788E1ZI",
+    pan: "AADFA7788E",
+    udyam: "UDYAM-PB-10-0020522",
 };
 
 export default function InvoiceModal({ order, onClose }) {
@@ -51,8 +55,15 @@ export default function InvoiceModal({ order, onClose }) {
                             <div className="text-2xl font-bold tracking-tight">{COMPANY.name}</div>
                             <div className="text-xs text-slate-500 mt-0.5">{COMPANY.tagline}</div>
                             <div className="text-xs text-slate-600 mt-2 leading-relaxed">{COMPANY.address}</div>
-                            <div className="text-xs text-slate-600">{COMPANY.phone} • {COMPANY.email}</div>
-                            <div className="text-xs text-slate-600">GSTIN: <span className="font-mono">{COMPANY.gstin}</span></div>
+                            <div className="text-xs text-slate-600">Office: {COMPANY.phone_office} • Mobile: {COMPANY.mobile_1}, {COMPANY.mobile_2}</div>
+                            <div className="text-xs text-slate-600">Email: {COMPANY.email}</div>
+                            <div className="text-xs text-slate-600 mt-1">
+                                <span className="font-mono">GSTIN: {COMPANY.gstin}</span>
+                                <span className="mx-2 text-slate-300">·</span>
+                                <span className="font-mono">PAN: {COMPANY.pan}</span>
+                                <span className="mx-2 text-slate-300">·</span>
+                                <span className="font-mono">{COMPANY.udyam}</span>
+                            </div>
                         </div>
                         <div className="text-right">
                             <div className="text-3xl font-bold text-emerald-600 tracking-tight">INVOICE</div>
@@ -134,6 +145,12 @@ export default function InvoiceModal({ order, onClose }) {
                             <div className="flex justify-between text-slate-600"><span>Tax</span><span>{fmtINR(order.tax)}</span></div>
                             {order.is_delivery && order.delivery_charges > 0 && (
                                 <div className="flex justify-between text-sky-700"><span>Delivery charges</span><span>{fmtINR(order.delivery_charges)}</span></div>
+                            )}
+                            {order.is_labour && order.labour_charges > 0 && (
+                                <div className="flex justify-between text-amber-700">
+                                    <span>Labour{order.labour_description ? ` (${order.labour_description})` : ""}</span>
+                                    <span>{fmtINR(order.labour_charges)}</span>
+                                </div>
                             )}
                             <div className="flex justify-between font-semibold text-lg pt-2 border-t border-slate-200 text-emerald-700">
                                 <span>TOTAL</span><span>{fmtINR(order.total)}</span>

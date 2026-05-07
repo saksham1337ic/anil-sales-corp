@@ -188,6 +188,9 @@ class CheckoutIn(BaseModel):
     is_delivery: bool = False
     delivery_address: Optional[str] = ""
     delivery_charges: float = 0.0
+    is_labour: bool = False
+    labour_description: Optional[str] = ""
+    labour_charges: float = 0.0
 
 
 class OrderItemOut(BaseModel):
@@ -225,6 +228,9 @@ class OrderOut(BaseModel):
     is_delivery: bool = False
     delivery_address: str = ""
     delivery_charges: float = 0.0
+    is_labour: bool = False
+    labour_description: str = ""
+    labour_charges: float = 0.0
     cancelled_at: Optional[str] = None
     cancel_reason: Optional[str] = None
 
@@ -289,15 +295,51 @@ async def require_admin(user: dict = Depends(get_current_user)) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Audit log helper
+# ---------------------------------------------------------------------------
+async def log_event(
+    *,
+    user: Optional[dict],
+    action: str,
+    entity_type: str,
+    entity_id: str = "",
+    summary: str = "",
+    metadata: Optional[dict] = None,
+):
+    """Best-effort audit log write. Never raises into request flow."""
+    try:
+        doc = {
+            "id": new_id(),
+            "action": action,
+            "entity_type": entity_type,
+            "entity_id": entity_id,
+            "summary": summary,
+            "user_id": (user or {}).get("id", ""),
+            "user_name": (user or {}).get("name", "system"),
+            "user_role": (user or {}).get("role", ""),
+            "metadata": metadata or {},
+            "created_at": now_iso(),
+        }
+        await db.audit_logs.insert_one(doc)
+    except Exception as e:
+        logger.warning("log_event failed: %s", e)
+
+
+# ---------------------------------------------------------------------------
 # Auth endpoints
 # ---------------------------------------------------------------------------
 @api.post("/auth/login")
 async def login(body: LoginIn):
     user = await db.users.find_one({"email": body.email.lower()})
     if not user or not verify_password(body.password, user.get("password_hash", "")):
+        await log_event(user=None, action="auth.login_failed", entity_type="user",
+                        entity_id="", summary=f"Failed login for {body.email}",
+                        metadata={"email": body.email})
         raise HTTPException(status_code=401, detail="Invalid email or password")
     token = create_token(user["id"], user["email"], user["role"])
     public = {k: user[k] for k in ("id", "email", "name", "role", "created_at")}
+    await log_event(user=public, action="auth.login", entity_type="user",
+                    entity_id=public["id"], summary=f"{public['name']} signed in")
     return {"token": token, "user": public}
 
 
@@ -308,6 +350,8 @@ async def me(user: dict = Depends(get_current_user)):
 
 @api.post("/auth/logout")
 async def logout(user: dict = Depends(get_current_user)):
+    await log_event(user=user, action="auth.logout", entity_type="user",
+                    entity_id=user["id"], summary=f"{user['name']} signed out")
     return {"ok": True}
 
 
@@ -395,6 +439,10 @@ async def create_product(body: ProductCreate, user: dict = Depends(get_current_u
             upsert=True,
         )
     doc.pop("_id", None)
+    await log_event(user=user, action="product.create", entity_type="product",
+                    entity_id=doc["id"],
+                    summary=f"Created product {doc['name']} ({doc['sku']})",
+                    metadata={"sku": doc["sku"], "stock": doc["stock"], "price": doc["selling_price"]})
     return doc
 
 
@@ -410,12 +458,20 @@ async def update_product(pid: str, body: ProductUpdate, user: dict = Depends(get
     if not res:
         raise HTTPException(status_code=404, detail="Product not found")
     res.pop("_id", None)
+    await log_event(user=user, action="product.update", entity_type="product",
+                    entity_id=pid, summary=f"Updated product {res['name']}",
+                    metadata={"changes": list(updates.keys())})
     return res
 
 
 @api.delete("/products/{pid}")
 async def delete_product(pid: str, user: dict = Depends(require_admin)):
+    prod = await db.products.find_one({"id": pid}, {"_id": 0, "name": 1, "sku": 1})
     await db.products.delete_one({"id": pid})
+    await log_event(user=user, action="product.delete", entity_type="product",
+                    entity_id=pid,
+                    summary=f"Deleted product {(prod or {}).get('name', pid)}",
+                    metadata={"sku": (prod or {}).get("sku", "")})
     return {"ok": True}
 
 
@@ -442,6 +498,10 @@ async def adjust_stock(body: StockAdjustIn, user: dict = Depends(get_current_use
         "user_name": user["name"],
         "created_at": now_iso(),
     })
+    await log_event(user=user, action="product.adjust_stock", entity_type="product",
+                    entity_id=body.product_id,
+                    summary=f"{body.reason} {body.quantity:+g} {product.get('unit','')} → {new_stock} for {product['name']}",
+                    metadata={"reason": body.reason, "delta": body.quantity, "new_stock": new_stock})
     return {"ok": True, "stock": new_stock}
 
 
@@ -472,6 +532,8 @@ async def create_customer(body: CustomerCreate, user: dict = Depends(get_current
     doc = {**body.model_dump(), "id": new_id(), "current_balance": 0.0, "created_at": now_iso()}
     await db.customers.insert_one(doc)
     doc.pop("_id", None)
+    await log_event(user=user, action="customer.create", entity_type="customer",
+                    entity_id=doc["id"], summary=f"Added customer {doc['name']}")
     return doc
 
 
@@ -486,12 +548,19 @@ async def update_customer(cid: str, body: CustomerUpdate, user: dict = Depends(g
     if not res:
         raise HTTPException(status_code=404, detail="Customer not found")
     res.pop("_id", None)
+    await log_event(user=user, action="customer.update", entity_type="customer",
+                    entity_id=cid, summary=f"Updated customer {res['name']}",
+                    metadata={"changes": list(updates.keys())})
     return res
 
 
 @api.delete("/customers/{cid}")
 async def delete_customer(cid: str, user: dict = Depends(require_admin)):
+    cust = await db.customers.find_one({"id": cid}, {"_id": 0, "name": 1})
     await db.customers.delete_one({"id": cid})
+    await log_event(user=user, action="customer.delete", entity_type="customer",
+                    entity_id=cid,
+                    summary=f"Deleted customer {(cust or {}).get('name', cid)}")
     return {"ok": True}
 
 
@@ -551,7 +620,8 @@ async def checkout(body: CheckoutIn, user: dict = Depends(get_current_user)):
     disc_amount = max(0.0, min(disc_amount, subtotal))
 
     delivery_charges = max(0.0, float(body.delivery_charges or 0.0)) if body.is_delivery else 0.0
-    total = round(subtotal - disc_amount + tax_total + delivery_charges, 2)
+    labour_charges = max(0.0, float(body.labour_charges or 0.0)) if body.is_labour else 0.0
+    total = round(subtotal - disc_amount + tax_total + delivery_charges + labour_charges, 2)
     paid = body.paid_amount
     if body.payment_method != "credit":
         # assume full paid unless explicitly set (cash/upi/bank/cheque always settle)
@@ -572,6 +642,12 @@ async def checkout(body: CheckoutIn, user: dict = Depends(get_current_user)):
 
     invoice_no = make_invoice_no()
 
+    # Determine status: credit OR delivery → starts pending; otherwise completed
+    if body.payment_method == "credit" or body.is_delivery:
+        order_status = "pending"
+    else:
+        order_status = "completed"
+
     order_doc = {
         "id": new_id(),
         "invoice_no": invoice_no,
@@ -588,7 +664,7 @@ async def checkout(body: CheckoutIn, user: dict = Depends(get_current_user)):
         "payment_method": body.payment_method,
         "paid_amount": round(paid, 2),
         "due_amount": due,
-        "status": "completed" if body.payment_method != "credit" else "pending",
+        "status": order_status,
         "created_by": user["id"],
         "created_by_name": user["name"],
         "notes": body.notes or "",
@@ -596,6 +672,9 @@ async def checkout(body: CheckoutIn, user: dict = Depends(get_current_user)):
         "is_delivery": bool(body.is_delivery),
         "delivery_address": (body.delivery_address or "") if body.is_delivery else "",
         "delivery_charges": round(delivery_charges, 2),
+        "is_labour": bool(body.is_labour),
+        "labour_description": (body.labour_description or "") if body.is_labour else "",
+        "labour_charges": round(labour_charges, 2),
         "cancelled_at": None,
         "cancel_reason": None,
     }
@@ -626,6 +705,15 @@ async def checkout(body: CheckoutIn, user: dict = Depends(get_current_user)):
         )
 
     order_doc.pop("_id", None)
+    await log_event(
+        user=user, action="order.create", entity_type="order", entity_id=order_doc["id"],
+        summary=f"Sale {invoice_no} • {customer_name} • ₹{total:.2f} ({body.payment_method})",
+        metadata={
+            "invoice_no": invoice_no, "total": total, "items": len(line_items),
+            "payment_method": body.payment_method, "is_delivery": bool(body.is_delivery),
+            "is_labour": bool(body.is_labour),
+        },
+    )
     return order_doc
 
 
@@ -664,6 +752,10 @@ async def update_status(oid: str, body: OrderStatusUpdate, user: dict = Depends(
     if not res:
         raise HTTPException(status_code=404, detail="Order not found")
     res.pop("_id", None)
+    await log_event(user=user, action="order.status_change", entity_type="order",
+                    entity_id=oid,
+                    summary=f"Order {res['invoice_no']} → {body.status}",
+                    metadata={"status": body.status})
     return res
 
 
@@ -686,6 +778,10 @@ async def record_payment(oid: str, body: PaymentRecordIn, user: dict = Depends(g
     order.update({"paid_amount": new_paid, "due_amount": new_due})
     if new_due == 0:
         order["status"] = "completed"
+    await log_event(user=user, action="order.payment", entity_type="order",
+                    entity_id=oid,
+                    summary=f"Payment ₹{body.amount:.2f} on {order['invoice_no']} (due ₹{new_due:.2f})",
+                    metadata={"amount": body.amount, "method": body.method})
     return order
 
 
@@ -741,6 +837,10 @@ async def cancel_order(oid: str, body: CancelOrderIn, user: dict = Depends(get_c
         "cancelled_at": cancelled_at,
         "cancel_reason": body.reason or "",
     })
+    await log_event(user=user, action="order.cancel", entity_type="order",
+                    entity_id=oid,
+                    summary=f"Cancelled {order['invoice_no']} (₹{order['total']:.2f})",
+                    metadata={"reason": body.reason or "", "items_restocked": len(order.get("items", []))})
     return order
 
 
@@ -750,10 +850,14 @@ async def cancel_order(oid: str, body: CancelOrderIn, user: dict = Depends(get_c
 COMPANY = {
     "name": "Anil Sales Corporation",
     "tagline": "Sanitary & Plumbing Products",
-    "address": "Shop No. 12, Main Market Road, Mumbai, Maharashtra 400001",
-    "phone": "+91 98765 43210",
-    "email": "contact@anilsales.com",
-    "gstin": "27AAAAA0000A1Z5",
+    "address": "9 - Cannaught Circus, Hind Samachar Ground, Jalandhar - 144001",
+    "phone_office": "0181 2282465",
+    "mobile_1": "7696057000",
+    "mobile_2": "7696028000",
+    "email": "vivek.anilsales@gmail.com",
+    "gstin": "03AADFA7788E1ZI",
+    "pan": "AADFA7788E",
+    "udyam": "UDYAM-PB-10-0020522",
 }
 
 
@@ -775,11 +879,14 @@ def build_invoice_pdf(order: dict) -> bytes:
 
     story = []
     # Header
+    contact_line = f"Office: {COMPANY['phone_office']} • Mobile: {COMPANY['mobile_1']}, {COMPANY['mobile_2']}"
+    ids_line = f"GSTIN: {COMPANY['gstin']} • PAN: {COMPANY['pan']} • {COMPANY['udyam']}"
     header_tbl = Table([[
         Paragraph(f"<b>{COMPANY['name']}</b><br/><font size=9 color='#64748B'>{COMPANY['tagline']}</font>"
                   f"<br/><font size=8 color='#475569'>{COMPANY['address']}</font>"
-                  f"<br/><font size=8 color='#475569'>{COMPANY['phone']} • {COMPANY['email']}</font>"
-                  f"<br/><font size=8 color='#475569'>GSTIN: {COMPANY['gstin']}</font>", styles["Normal"]),
+                  f"<br/><font size=8 color='#475569'>{contact_line}</font>"
+                  f"<br/><font size=8 color='#475569'>Email: {COMPANY['email']}</font>"
+                  f"<br/><font size=8 color='#475569'>{ids_line}</font>", styles["Normal"]),
         Paragraph(f"<para align=right><font size=18 color='#059669'><b>INVOICE</b></font>"
                   f"<br/><font size=10><b>{order['invoice_no']}</b></font>"
                   f"<br/><font size=8 color='#64748B'>Date: {order['created_at'][:19].replace('T',' ')}</font></para>",
@@ -847,6 +954,11 @@ def build_invoice_pdf(order: dict) -> bytes:
     ]
     if order.get("is_delivery") and order.get("delivery_charges", 0) > 0:
         tot_rows.append(["Delivery charges", f"₹{order['delivery_charges']:.2f}"])
+    if order.get("is_labour") and order.get("labour_charges", 0) > 0:
+        lbl = "Labour charges"
+        if order.get("labour_description"):
+            lbl = f"Labour ({order['labour_description'][:24]})"
+        tot_rows.append([lbl, f"₹{order['labour_charges']:.2f}"])
     tot_rows += [
         ["TOTAL", f"₹{order['total']:.2f}"],
         ["Paid", f"₹{order['paid_amount']:.2f}"],
@@ -1136,6 +1248,9 @@ async def create_task(body: TaskCreate, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=400, detail="Title is required")
     await db.tasks.insert_one(doc)
     doc.pop("_id", None)
+    await log_event(user=user, action="task.create", entity_type="task", entity_id=doc["id"],
+                    summary=f"Added task '{doc['title']}' for {doc['assigned_to_name']}",
+                    metadata={"priority": doc["priority"], "due_date": doc["due_date"]})
     return doc
 
 
@@ -1157,6 +1272,14 @@ async def update_task(tid: str, body: TaskUpdate, user: dict = Depends(get_curre
     if not res:
         raise HTTPException(status_code=404, detail="Task not found")
     res.pop("_id", None)
+    if "status" in updates:
+        await log_event(user=user, action="task.toggle", entity_type="task", entity_id=tid,
+                        summary=f"Marked task '{res['title']}' as {updates['status']}",
+                        metadata={"status": updates["status"]})
+    else:
+        await log_event(user=user, action="task.update", entity_type="task", entity_id=tid,
+                        summary=f"Updated task '{res['title']}'",
+                        metadata={"changes": list(updates.keys())})
     return res
 
 
@@ -1169,7 +1292,66 @@ async def delete_task(tid: str, user: dict = Depends(get_current_user)):
     if task["created_by"] != user["id"] and user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Only creator or admin can delete")
     await db.tasks.delete_one({"id": tid})
+    await log_event(user=user, action="task.delete", entity_type="task", entity_id=tid,
+                    summary=f"Deleted task '{task['title']}'")
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Audit logs (admin only)
+# ---------------------------------------------------------------------------
+class AuditLogOut(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    action: str
+    entity_type: str
+    entity_id: str = ""
+    summary: str = ""
+    user_id: str = ""
+    user_name: str = ""
+    user_role: str = ""
+    metadata: dict = Field(default_factory=dict)
+    created_at: str
+
+
+@api.get("/audit-logs", response_model=List[AuditLogOut])
+async def list_audit_logs(
+    q: Optional[str] = None,
+    action: Optional[str] = None,
+    entity_type: Optional[str] = None,
+    days: int = 7,
+    limit: int = 500,
+    user: dict = Depends(require_admin),
+):
+    filt: dict = {}
+    if days and days > 0:
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        filt["created_at"] = {"$gte": since}
+    if action and action != "all":
+        filt["action"] = action
+    if entity_type and entity_type != "all":
+        filt["entity_type"] = entity_type
+    if q:
+        filt["$or"] = [
+            {"summary": {"$regex": q, "$options": "i"}},
+            {"user_name": {"$regex": q, "$options": "i"}},
+            {"action": {"$regex": q, "$options": "i"}},
+        ]
+    rows = await db.audit_logs.find(filt, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    return rows
+
+
+@api.get("/audit-logs/stats")
+async def audit_log_stats(days: int = 7, user: dict = Depends(require_admin)):
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    cur = db.audit_logs.aggregate([
+        {"$match": {"created_at": {"$gte": since}}},
+        {"$group": {"_id": "$action", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+    ])
+    by_action = [{"action": r["_id"], "count": r["count"]} async for r in cur]
+    total = sum(r["count"] for r in by_action)
+    return {"days": days, "total": total, "by_action": by_action}
 
 
 # ---------------------------------------------------------------------------
@@ -1235,6 +1417,10 @@ async def ensure_indexes():
     await db.tasks.create_index("id", unique=True)
     await db.tasks.create_index("assigned_to")
     await db.tasks.create_index("status")
+    await db.audit_logs.create_index("id", unique=True)
+    await db.audit_logs.create_index("created_at")
+    await db.audit_logs.create_index("action")
+    await db.audit_logs.create_index("entity_type")
 
 
 async def seed():

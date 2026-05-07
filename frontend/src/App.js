@@ -10,6 +10,7 @@ import Customers from "@/pages/Customers";
 import Orders from "@/pages/Orders";
 import Analytics from "@/pages/Analytics";
 import Tasks from "@/pages/Tasks";
+import AuditLogs from "@/pages/AuditLogs";
 import Layout from "@/components/Layout";
 import "@/App.css";
 
@@ -49,6 +50,14 @@ function AppRoutes() {
                     element={
                         <Protected adminOnly>
                             <Analytics />
+                        </Protected>
+                    }
+                />
+                <Route
+                    path="/logs"
+                    element={
+                        <Protected adminOnly>
+                            <AuditLogs />
                         </Protected>
                     }
                 />

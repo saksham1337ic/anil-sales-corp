@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
     Search, Plus, Minus, Trash2, ShoppingCart, User, Banknote,
     CreditCard, Smartphone, FileCheck2, Building2, X, Receipt as ReceiptIcon,
-    Package, Loader2, Tag, Truck,
+    Package, Loader2, Tag, Truck, Wrench,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api, fmtINR } from "@/lib/api";
@@ -41,6 +41,9 @@ export default function POS() {
     const [isDelivery, setIsDelivery] = useState(false);
     const [deliveryAddress, setDeliveryAddress] = useState("");
     const [deliveryCharges, setDeliveryCharges] = useState("");
+    const [isLabour, setIsLabour] = useState(false);
+    const [labourDescription, setLabourDescription] = useState("");
+    const [labourCharges, setLabourCharges] = useState("");
     const [submitting, setSubmitting] = useState(false);
     const [invoice, setInvoice] = useState(null);
 
@@ -109,9 +112,10 @@ export default function POS() {
             ? subtotal * (Number(discountValue) || 0) / 100
             : Math.min(Number(discountValue) || 0, subtotal);
         const delivery = isDelivery ? Math.max(0, Number(deliveryCharges) || 0) : 0;
-        const total = Math.max(0, subtotal - disc + delivery);
-        return { subtotal, disc, delivery, total };
-    }, [cart, discountType, discountValue, isDelivery, deliveryCharges]);
+        const labour = isLabour ? Math.max(0, Number(labourCharges) || 0) : 0;
+        const total = Math.max(0, subtotal - disc + delivery + labour);
+        return { subtotal, disc, delivery, labour, total };
+    }, [cart, discountType, discountValue, isDelivery, deliveryCharges, isLabour, labourCharges]);
 
     async function checkout() {
         if (!cart.length) return toast.error("Cart is empty");
@@ -133,6 +137,9 @@ export default function POS() {
                 is_delivery: isDelivery,
                 delivery_address: isDelivery ? deliveryAddress.trim() : "",
                 delivery_charges: isDelivery ? (Number(deliveryCharges) || 0) : 0,
+                is_labour: isLabour,
+                labour_description: isLabour ? labourDescription.trim() : "",
+                labour_charges: isLabour ? (Number(labourCharges) || 0) : 0,
             };
             const { data } = await api.post("/pos/checkout", payload);
             toast.success(`Invoice ${data.invoice_no} created`);
@@ -145,6 +152,9 @@ export default function POS() {
             setIsDelivery(false);
             setDeliveryAddress("");
             setDeliveryCharges("");
+            setIsLabour(false);
+            setLabourDescription("");
+            setLabourCharges("");
             loadProducts();
         } catch (e) {
             toast.error(e?.response?.data?.detail || "Checkout failed");
@@ -356,6 +366,9 @@ export default function POS() {
                             {isDelivery && (
                                 <div className="flex justify-between text-secondary"><span>Delivery charges</span><span>+{fmtINR(totals.delivery)}</span></div>
                             )}
+                            {isLabour && (
+                                <div className="flex justify-between text-amber-400"><span>Labour charges</span><span>+{fmtINR(totals.labour)}</span></div>
+                            )}
                             <div className="flex justify-between font-heading text-lg font-semibold pt-1.5 border-t border-border" data-testid="pos-cart-total">
                                 <span>Total</span><span className="text-primary">{fmtINR(totals.total)}</span>
                             </div>
@@ -391,6 +404,41 @@ export default function POS() {
                                             placeholder="0"
                                             className="h-8 bg-card border-border text-sm"
                                             data-testid="pos-delivery-charges"
+                                        />
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="rounded-md border border-border bg-muted/20 p-3 space-y-2">
+                            <label className="flex items-center gap-2 cursor-pointer">
+                                <Checkbox
+                                    checked={isLabour}
+                                    onCheckedChange={(v) => setIsLabour(!!v)}
+                                    data-testid="pos-labour-checkbox"
+                                />
+                                <span className="text-sm font-medium flex items-center gap-1.5">
+                                    <Wrench size={14} className="text-amber-400" /> Labour / installation
+                                </span>
+                            </label>
+                            {isLabour && (
+                                <div className="space-y-2 pt-1 animate-in-up">
+                                    <Input
+                                        value={labourDescription}
+                                        onChange={(e) => setLabourDescription(e.target.value)}
+                                        placeholder="Description (e.g. Plumbing fix, fitting…)"
+                                        className="h-8 bg-card border-border text-sm"
+                                        data-testid="pos-labour-description"
+                                    />
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-xs uppercase tracking-wider text-muted-foreground shrink-0">Charges</span>
+                                        <Input
+                                            type="number"
+                                            value={labourCharges}
+                                            onChange={(e) => setLabourCharges(e.target.value)}
+                                            placeholder="0"
+                                            className="h-8 bg-card border-border text-sm"
+                                            data-testid="pos-labour-charges"
                                         />
                                     </div>
                                 </div>

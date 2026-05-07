@@ -153,7 +153,7 @@ class TestCheckout:
         r = requests.post(f"{API}/pos/checkout", json=body, headers=admin_headers)
         assert r.status_code == 200, r.text
         order = r.json()
-        assert order["invoice_no"].startswith("ASC-") and len(order["invoice_no"]) == len("ASC-YYYYMMDDHHMMSS")
+        assert order["invoice_no"].startswith("ASC-") and len(order["invoice_no"]) == len("ASC-YYYYMMDDHHMMSSXXXX")
         assert order["status"] == "completed"
         assert order["due_amount"] == 0
 
@@ -456,3 +456,195 @@ class TestDeliveryCheckout:
         assert o["delivery_address"] == ""
         # total = 500 + tax (no delivery)
         assert o["total"] == round(500 + (500 * p["tax_rate"] / 100.0), 2)
+
+
+# ---------------- Iteration 3: Labour Charges ----------------
+class TestLabourCharges:
+    def test_checkout_with_labour(self, admin_headers):
+        time.sleep(1.1)
+        prods = requests.get(f"{API}/products", headers=admin_headers).json()
+        p = next(x for x in prods if x["stock"] >= 1)
+        body = {
+            "items": [{"product_id": p["id"], "quantity": 1, "price": 1000, "discount": 0}],
+            "payment_method": "cash",
+            "is_labour": True,
+            "labour_description": "Plumbing fitting",
+            "labour_charges": 300,
+        }
+        r = requests.post(f"{API}/pos/checkout", json=body, headers=admin_headers)
+        assert r.status_code == 200, r.text
+        order = r.json()
+        assert order["is_labour"] is True
+        assert order["labour_description"] == "Plumbing fitting"
+        assert order["labour_charges"] == 300
+        # subtotal=1000, tax=tax_rate%, +labour 300
+        expected = round(1000 + (1000 * p["tax_rate"] / 100.0) + 300, 2)
+        assert order["total"] == expected
+        # not delivery -> still completed
+        assert order["status"] == "completed"
+
+    def test_checkout_with_delivery_and_labour(self, admin_headers):
+        time.sleep(1.1)
+        prods = requests.get(f"{API}/products", headers=admin_headers).json()
+        p = next(x for x in prods if x["stock"] >= 1)
+        body = {
+            "items": [{"product_id": p["id"], "quantity": 1, "price": 1000, "discount": 0}],
+            "payment_method": "cash",
+            "is_delivery": True, "delivery_address": "Addr A", "delivery_charges": 100,
+            "is_labour": True, "labour_description": "Install", "labour_charges": 250,
+        }
+        r = requests.post(f"{API}/pos/checkout", json=body, headers=admin_headers)
+        assert r.status_code == 200
+        o = r.json()
+        assert o["is_delivery"] and o["is_labour"]
+        assert o["delivery_charges"] == 100 and o["labour_charges"] == 250
+        # PDF check + new company info bytes
+        token = admin_headers["Authorization"].split()[1]
+        rpdf = requests.get(f"{API}/orders/{o['id']}/invoice.pdf?token={token}")
+        assert rpdf.status_code == 200 and rpdf.content[:4] == b"%PDF"
+        # Extract text via pypdf (reportlab compresses streams)
+        from pypdf import PdfReader
+        from io import BytesIO
+        reader = PdfReader(BytesIO(rpdf.content))
+        text = "\n".join(page.extract_text() or "" for page in reader.pages)
+        assert "AADFA7788E" in text, f"PAN/GSTIN substring missing in invoice PDF text"
+        assert "Jalandhar" in text, "address city missing in invoice PDF text"
+        assert "UDYAM-PB-10-0020522" in text
+        assert "vivek.anilsales@gmail.com" in text
+        assert "7696057000" in text and "0181 2282465" in text
+
+
+# ---------------- Iteration 3: Delivery default-pending ----------------
+class TestDeliveryPendingDefault:
+    def test_delivery_cash_is_pending(self, admin_headers):
+        time.sleep(1.1)
+        prods = requests.get(f"{API}/products", headers=admin_headers).json()
+        p = next(x for x in prods if x["stock"] >= 1)
+        body = {
+            "items": [{"product_id": p["id"], "quantity": 1, "price": 500, "discount": 0}],
+            "payment_method": "cash",
+            "is_delivery": True, "delivery_address": "X", "delivery_charges": 50,
+        }
+        r = requests.post(f"{API}/pos/checkout", json=body, headers=admin_headers)
+        assert r.status_code == 200
+        assert r.json()["status"] == "pending"
+
+    def test_delivery_upi_is_pending(self, admin_headers):
+        time.sleep(1.1)
+        prods = requests.get(f"{API}/products", headers=admin_headers).json()
+        p = next(x for x in prods if x["stock"] >= 1)
+        body = {
+            "items": [{"product_id": p["id"], "quantity": 1, "price": 500, "discount": 0}],
+            "payment_method": "upi",
+            "is_delivery": True, "delivery_address": "X", "delivery_charges": 0,
+        }
+        r = requests.post(f"{API}/pos/checkout", json=body, headers=admin_headers)
+        assert r.status_code == 200
+        assert r.json()["status"] == "pending"
+
+    def test_no_delivery_cash_is_completed(self, admin_headers):
+        time.sleep(1.1)
+        prods = requests.get(f"{API}/products", headers=admin_headers).json()
+        p = next(x for x in prods if x["stock"] >= 1)
+        body = {
+            "items": [{"product_id": p["id"], "quantity": 1, "price": 200, "discount": 0}],
+            "payment_method": "cash",
+        }
+        r = requests.post(f"{API}/pos/checkout", json=body, headers=admin_headers)
+        assert r.status_code == 200
+        assert r.json()["status"] == "completed"
+
+    def test_credit_no_delivery_is_pending(self, admin_headers):
+        time.sleep(1.1)
+        prods = requests.get(f"{API}/products", headers=admin_headers).json()
+        custs = requests.get(f"{API}/customers", headers=admin_headers).json()
+        p = next(x for x in prods if x["stock"] >= 1)
+        body = {
+            "customer_id": custs[0]["id"],
+            "items": [{"product_id": p["id"], "quantity": 1, "price": 300, "discount": 0}],
+            "payment_method": "credit", "paid_amount": 0,
+        }
+        r = requests.post(f"{API}/pos/checkout", json=body, headers=admin_headers)
+        assert r.status_code == 200
+        assert r.json()["status"] == "pending"
+
+
+# ---------------- Iteration 3: Audit Logs ----------------
+class TestAuditLogs:
+    def test_admin_can_list(self, admin_headers):
+        # Trigger a fresh login event
+        requests.post(f"{API}/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASS})
+        r = requests.get(f"{API}/audit-logs?days=1&limit=200", headers=admin_headers)
+        assert r.status_code == 200
+        rows = r.json()
+        assert isinstance(rows, list) and len(rows) > 0
+        actions = {row["action"] for row in rows}
+        assert "auth.login" in actions
+
+    def test_staff_forbidden(self, staff_headers):
+        r = requests.get(f"{API}/audit-logs", headers=staff_headers)
+        assert r.status_code == 403
+
+    def test_stats(self, admin_headers):
+        r = requests.get(f"{API}/audit-logs/stats?days=1", headers=admin_headers)
+        assert r.status_code == 200
+        d = r.json()
+        assert "total" in d and "by_action" in d
+        assert isinstance(d["by_action"], list)
+        assert d["total"] >= 0
+
+    def test_filters(self, admin_headers):
+        # entity_type filter
+        r = requests.get(f"{API}/audit-logs?entity_type=order&days=7&limit=100", headers=admin_headers)
+        assert r.status_code == 200
+        for row in r.json():
+            assert row["entity_type"] == "order"
+        # q filter
+        r2 = requests.get(f"{API}/audit-logs?q=ASC-&days=7&limit=50", headers=admin_headers)
+        assert r2.status_code == 200
+
+    def test_product_create_logged(self, admin_headers):
+        sku = f"TESTLOG-{int(time.time())}"
+        body = {"name": "TEST_LogProd", "sku": sku, "category": "Tools",
+                "selling_price": 50, "cost_price": 30, "stock": 5}
+        rc = requests.post(f"{API}/products", json=body, headers=admin_headers)
+        assert rc.status_code == 200
+        pid = rc.json()["id"]
+        # update
+        requests.patch(f"{API}/products/{pid}", json={"selling_price": 60}, headers=admin_headers)
+        # delete
+        requests.delete(f"{API}/products/{pid}", headers=admin_headers)
+        # check logs include create+update+delete for this entity
+        time.sleep(0.5)
+        r = requests.get(f"{API}/audit-logs?entity_type=product&days=1&limit=500", headers=admin_headers)
+        logs = r.json()
+        actions_for_pid = {log["action"] for log in logs if log["entity_id"] == pid}
+        assert {"product.create", "product.update", "product.delete"}.issubset(actions_for_pid)
+
+    def test_order_and_task_logs(self, admin_headers):
+        # task create + toggle
+        cr = requests.post(f"{API}/tasks", json={"title": "TEST_log_task"}, headers=admin_headers)
+        tid = cr.json()["id"]
+        requests.patch(f"{API}/tasks/{tid}", json={"status": "done"}, headers=admin_headers)
+        time.sleep(0.5)
+        r = requests.get(f"{API}/audit-logs?entity_type=task&days=1&limit=500", headers=admin_headers)
+        logs = r.json()
+        a = {log["action"] for log in logs if log["entity_id"] == tid}
+        assert "task.create" in a and "task.toggle" in a
+        requests.delete(f"{API}/tasks/{tid}", headers=admin_headers)
+
+        # order create + cancel
+        time.sleep(1.1)
+        prods = requests.get(f"{API}/products", headers=admin_headers).json()
+        p = next(x for x in prods if x["stock"] >= 1)
+        co = requests.post(f"{API}/pos/checkout", json={
+            "items": [{"product_id": p["id"], "quantity": 1, "price": 100, "discount": 0}],
+            "payment_method": "cash",
+        }, headers=admin_headers)
+        oid = co.json()["id"]
+        requests.post(f"{API}/orders/{oid}/cancel", json={"reason": "test"}, headers=admin_headers)
+        time.sleep(0.5)
+        r2 = requests.get(f"{API}/audit-logs?entity_type=order&days=1&limit=500", headers=admin_headers)
+        a2 = {log["action"] for log in r2.json() if log["entity_id"] == oid}
+        assert "order.create" in a2 and "order.cancel" in a2
+
