@@ -1,0 +1,39 @@
+{
+  "summary": "Iteration 4 testing - Orders date filter (from/to + Today/7d/30d/This month/Clear), CSV export with token query param + filename 'sales_*', and Customers FIFO payment (record_customer_payment + dialog + drawer button). Backend: 55/55 pytest passing (39 prior + 16 new across TestOrdersDateFilter, TestOrdersCsvExport, TestCustomerPayment). Frontend: live e2e on https://plumb-stock-pro.preview.emergentagent.com confirms all flows: Today/This month presets fire /api/orders?from_date=&to_date=, Clear resets, Export triggers CSV download (sales_YYYYMMDD_HHMMSS.csv), customer Pay button opens dialog pre-filled to outstanding, partial payment closes dialog, success toast appears, row badge updates immediately (50735.38 -> 50725.38 after Rs10 payment), drawer Record-payment opens same dialog.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "POST /api/customers/{cid}/payment is not idempotent and does not run inside a transaction - if the orders.update_one calls succeed but customers.update_one fails (or vice-versa), customer.current_balance and order due_amount will diverge. Wrap allocation + balance decrement in a single MongoDB session/transaction or persist a payments collection as the source of truth.",
+    "record_customer_payment has no role gating - any authenticated user (incl. staff) can record payments and decrement balances. Likely should be admin-only or at minimum logged with stronger audit (already logs, but no rate-limit or duplicate-detection).",
+    "GET /api/orders/export.csv accepts ?token= query param which is convenient but tokens leak into server access logs/browser history/referrer headers. Mitigation: short-lived signed download tokens or POST + 302 + temp signed URL. At minimum, document the trade-off.",
+    "Export streams entire result set into memory via to_list(100000) before writing CSV. For large stores this will OOM the worker. Consider StreamingResponse with an async generator that yields rows.",
+    "list_orders date filter compares created_at (string ISO) with string range. Works because ISO-8601 sorts lexicographically, but the to_date upper bound 'YYYY-MM-DDT23:59:59.999999' is naive (no TZ suffix) and orders stored as UTC ISO without 'Z' could behave unexpectedly across timezones. Use proper datetime objects.",
+    "The CSV BOM (\\ufeff) is correctly prepended for Excel compatibility but is undocumented. Confirm front-end download path handles BOM (it does, because browser saves bytes verbatim).",
+    "server.py is now ~1670 lines (carry-over). Splitting into routers becoming overdue.",
+    "Carry-over from iter 3: order cancel + status PATCH still ungated; tasks PATCH ungated; audit_logs no TTL."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py (added TestOrdersDateFilter [3], TestOrdersCsvExport [5], TestCustomerPayment [8] = 16 new tests)",
+    "/app/test_reports/iteration_4.json (created)",
+    "/app/test_reports/pytest/pytest_results.xml (regenerated, 55 passed)"
+  ],
+  "success_rate": {"backend": "100% (55/55)", "frontend": "100% on tested flows (date presets, clear, export download, customer pay dialog + drawer pay + row update)"},
+  "test_credentials": "admin@anilsales.com / Admin@123, staff@anilsales.com / Staff@123 - both work",
+  "seed_data_creation": "TestCustomerPayment fixture creates throwaway TEST_PayCust_* and TEST_PayDeliv_* customers with credit orders, deletes the customer at teardown (orders remain). UI test recorded a Rs10 payment against seeded customer 'Kumar Hardware Store' so its outstanding dropped from 50735.38 to 50725.38 - non-destructive but balance is now slightly lower than before this run.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iteration 4 backend coverage: TestOrdersDateFilter (today/from-to filter inclusive both ends, status_+q+date combo, far-past empty). TestOrdersCsvExport (no-token 401, ?token= 200 + content-type 'text/csv' + Content-Disposition 'attachment; filename=sales_*.csv', Authorization Bearer header also accepted, date subset filtering, invalid token 401). NOTE: backend writes a UTF-8 BOM (\\ufeff) at start of CSV - tests strip via .lstrip('\\ufeff') before asserting header. TestCustomerPayment (negative/zero -> 400, missing customer -> 404, partial FIFO leaves order B untouched, full payment auto-completes non-delivery, overpayment leaves balance negative, audit log 'customer.payment' written, delivery order status preserved after full payment). Frontend test-ids confirmed live: orders-from-date, orders-to-date, orders-range-today, orders-range-clear, orders-export-btn (triggers download with filename starting 'sales_'), customer-pay-{id}, customer-pay-dialog, customer-pay-amount (pre-filled to outstanding), customer-pay-method, customer-pay-confirm-btn, customer-drawer-pay-btn. Preset buttons '7 days' / '30 days' use full word labels (not '7d'/'30d'). After login, app routes to '/' (not '/dashboard') - wait for 'Welcome back' text instead of URL.",
+  "rca of the issue": "N/A - all tests green."
+}

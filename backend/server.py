@@ -570,6 +570,61 @@ async def customer_orders(cid: str, user: dict = Depends(get_current_user)):
     return rows
 
 
+class CustomerPaymentIn(BaseModel):
+    amount: float
+    method: Literal["cash", "upi", "bank", "cheque"] = "cash"
+    note: Optional[str] = ""
+
+
+@api.post("/customers/{cid}/payment", response_model=CustomerOut)
+async def record_customer_payment(cid: str, body: CustomerPaymentIn, user: dict = Depends(get_current_user)):
+    if body.amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be positive")
+    customer = await db.customers.find_one({"id": cid}, {"_id": 0})
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    remaining = round(body.amount, 2)
+    # FIFO allocate to oldest orders with due_amount > 0 (skip cancelled)
+    open_orders = await db.orders.find(
+        {"customer_id": cid, "due_amount": {"$gt": 0}, "status": {"$ne": "cancelled"}},
+        {"_id": 0}
+    ).sort("created_at", 1).to_list(500)
+
+    allocated = []
+    for o in open_orders:
+        if remaining <= 0:
+            break
+        pay = min(remaining, o["due_amount"])
+        new_paid = round(o.get("paid_amount", 0) + pay, 2)
+        new_due = round(o["due_amount"] - pay, 2)
+        update = {"paid_amount": new_paid, "due_amount": new_due}
+        if new_due == 0 and o["status"] in ("pending", "dispatched"):
+            # leave delivery flow alone but mark as completed if paid in full and not delivery-specific
+            # Only auto-complete non-delivery (counter sales). Delivery should still go through dispatch.
+            if not o.get("is_delivery"):
+                update["status"] = "completed"
+        await db.orders.update_one({"id": o["id"]}, {"$set": update})
+        allocated.append({"invoice_no": o["invoice_no"], "applied": pay})
+        remaining = round(remaining - pay, 2)
+
+    # Decrement balance by full amount
+    await db.customers.update_one(
+        {"id": cid}, {"$inc": {"current_balance": -body.amount}}
+    )
+    updated = await db.customers.find_one({"id": cid}, {"_id": 0})
+
+    await log_event(
+        user=user, action="customer.payment", entity_type="customer", entity_id=cid,
+        summary=f"₹{body.amount:.2f} from {customer['name']} ({body.method})",
+        metadata={
+            "amount": body.amount, "method": body.method, "note": body.note,
+            "allocated": allocated, "unallocated": remaining,
+        },
+    )
+    return updated
+
+
 # ---------------------------------------------------------------------------
 # Orders / POS Checkout
 # ---------------------------------------------------------------------------
@@ -721,6 +776,8 @@ async def checkout(body: CheckoutIn, user: dict = Depends(get_current_user)):
 async def list_orders(
     status_: Optional[str] = None,
     q: Optional[str] = None,
+    from_date: Optional[str] = None,  # YYYY-MM-DD
+    to_date: Optional[str] = None,    # YYYY-MM-DD
     limit: int = 200,
     user: dict = Depends(get_current_user),
 ):
@@ -732,8 +789,95 @@ async def list_orders(
             {"invoice_no": {"$regex": q, "$options": "i"}},
             {"customer_name": {"$regex": q, "$options": "i"}},
         ]
+    date_range: dict = {}
+    if from_date:
+        date_range["$gte"] = f"{from_date}T00:00:00"
+    if to_date:
+        date_range["$lte"] = f"{to_date}T23:59:59.999999"
+    if date_range:
+        filt["created_at"] = date_range
     rows = await db.orders.find(filt, {"_id": 0}).sort("created_at", -1).to_list(limit)
     return rows
+
+
+@api.get("/orders/export.csv")
+async def export_orders_csv(request: Request):
+    """CSV export of orders. Auth via Authorization header OR ?token= query param."""
+    token = request.query_params.get("token") or (
+        request.headers.get("Authorization", "")[7:]
+        if request.headers.get("Authorization", "").startswith("Bearer ") else None
+    )
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing token")
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    qp = request.query_params
+    filt: dict = {}
+    status_ = qp.get("status_")
+    q = qp.get("q")
+    from_date = qp.get("from_date")
+    to_date = qp.get("to_date")
+    if status_ and status_ != "all":
+        filt["status"] = status_
+    if q:
+        filt["$or"] = [
+            {"invoice_no": {"$regex": q, "$options": "i"}},
+            {"customer_name": {"$regex": q, "$options": "i"}},
+        ]
+    date_range: dict = {}
+    if from_date:
+        date_range["$gte"] = f"{from_date}T00:00:00"
+    if to_date:
+        date_range["$lte"] = f"{to_date}T23:59:59.999999"
+    if date_range:
+        filt["created_at"] = date_range
+
+    rows = await db.orders.find(filt, {"_id": 0}).sort("created_at", -1).to_list(100000)
+
+    import csv
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "Invoice", "Date", "Customer", "Phone", "Items", "Subtotal", "Discount",
+        "Tax", "Delivery", "Labour", "Total", "Paid", "Due",
+        "Payment", "Status", "Delivery?", "Address", "Cashier", "Notes",
+    ])
+    for o in rows:
+        writer.writerow([
+            o.get("invoice_no", ""),
+            (o.get("created_at") or "")[:19].replace("T", " "),
+            o.get("customer_name", ""),
+            o.get("customer_phone", ""),
+            sum(it.get("quantity", 0) for it in o.get("items", [])),
+            f"{o.get('subtotal', 0):.2f}",
+            f"{o.get('discount_amount', 0):.2f}",
+            f"{o.get('tax', 0):.2f}",
+            f"{o.get('delivery_charges', 0):.2f}",
+            f"{o.get('labour_charges', 0):.2f}",
+            f"{o.get('total', 0):.2f}",
+            f"{o.get('paid_amount', 0):.2f}",
+            f"{o.get('due_amount', 0):.2f}",
+            o.get("payment_method", ""),
+            o.get("status", ""),
+            "Yes" if o.get("is_delivery") else "No",
+            o.get("delivery_address", ""),
+            o.get("created_by_name", ""),
+            (o.get("notes", "") or "").replace("\n", " "),
+        ])
+    csv_bytes = buf.getvalue().encode("utf-8-sig")
+    buf.close()
+    fname = f"sales_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.csv"
+    return StreamingResponse(
+        io.BytesIO(csv_bytes),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
 
 
 @api.get("/orders/{oid}", response_model=OrderOut)

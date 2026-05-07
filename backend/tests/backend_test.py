@@ -648,3 +648,246 @@ class TestAuditLogs:
         a2 = {log["action"] for log in r2.json() if log["entity_id"] == oid}
         assert "order.create" in a2 and "order.cancel" in a2
 
+
+
+# ---------------- Iteration 4: date filters, CSV export, customer payment ----------------
+import datetime as _dt
+
+
+def _today_str():
+    return _dt.date.today().strftime("%Y-%m-%d")
+
+
+class TestOrdersDateFilter:
+    def test_today_filter_returns_recent(self, admin_headers):
+        # create a fresh order so today bucket has at least one
+        prods = requests.get(f"{API}/products", headers=admin_headers).json()
+        p = prods[0]
+        requests.post(f"{API}/pos/checkout", json={
+            "items": [{"product_id": p["id"], "quantity": 1, "price": p["selling_price"], "discount": 0}],
+            "payment_method": "cash",
+        }, headers=admin_headers)
+        td = _today_str()
+        r = requests.get(f"{API}/orders?from_date={td}&to_date={td}&limit=500", headers=admin_headers)
+        assert r.status_code == 200
+        rows = r.json()
+        assert len(rows) >= 1
+        for o in rows:
+            assert o["created_at"][:10] == td, f"order outside date range: {o['created_at']}"
+
+    def test_far_past_returns_empty(self, admin_headers):
+        r = requests.get(f"{API}/orders?from_date=2000-01-01&to_date=2000-01-02", headers=admin_headers)
+        assert r.status_code == 200
+        assert r.json() == []
+
+    def test_status_and_q_combined_with_dates(self, admin_headers):
+        td = _today_str()
+        r = requests.get(f"{API}/orders?status_=completed&from_date={td}&to_date={td}", headers=admin_headers)
+        assert r.status_code == 200
+        for o in r.json():
+            assert o["status"] == "completed"
+            assert o["created_at"][:10] == td
+
+
+class TestOrdersCsvExport:
+    EXPECTED_HEADER = "Invoice,Date,Customer,Phone,Items,Subtotal,Discount,Tax,Delivery,Labour,Total,Paid,Due,Payment,Status,Delivery?,Address,Cashier,Notes"
+
+    def test_export_no_token_401(self):
+        r = requests.get(f"{API}/orders/export.csv")
+        assert r.status_code == 401
+
+    def test_export_with_query_token(self, admin_token):
+        r = requests.get(f"{API}/orders/export.csv?token={admin_token}", timeout=20)
+        assert r.status_code == 200
+        ct = r.headers.get("content-type", "")
+        assert "text/csv" in ct, f"unexpected content-type: {ct}"
+        cd = r.headers.get("content-disposition", "")
+        assert "attachment" in cd.lower(), f"missing attachment: {cd}"
+        assert "filename=" in cd.lower() and "sales_" in cd.lower(), f"filename missing/wrong: {cd}"
+        first_line = r.text.lstrip("\ufeff").splitlines()[0]
+        assert first_line.startswith(self.EXPECTED_HEADER), f"header mismatch: {first_line!r}"
+
+    def test_export_with_bearer_header(self, admin_headers):
+        r = requests.get(f"{API}/orders/export.csv", headers=admin_headers, timeout=20)
+        assert r.status_code == 200
+        assert "text/csv" in r.headers.get("content-type", "")
+
+    def test_export_with_date_filter(self, admin_token):
+        # ensure there's at least one order today
+        admin_h = {"Authorization": f"Bearer {admin_token}"}
+        prods = requests.get(f"{API}/products", headers=admin_h).json()
+        p = prods[0]
+        co = requests.post(f"{API}/pos/checkout", json={
+            "items": [{"product_id": p["id"], "quantity": 1, "price": p["selling_price"], "discount": 0}],
+            "payment_method": "cash",
+        }, headers=admin_h)
+        assert co.status_code == 200
+        inv_today = co.json()["invoice_no"]
+
+        td = _today_str()
+        r_today = requests.get(f"{API}/orders/export.csv?token={admin_token}&from_date={td}&to_date={td}", timeout=20)
+        assert r_today.status_code == 200
+        text_today = r_today.text
+        assert inv_today in text_today, "today's invoice missing from today's CSV"
+
+        # past range should not contain the new invoice
+        r_past = requests.get(f"{API}/orders/export.csv?token={admin_token}&from_date=2000-01-01&to_date=2000-01-02", timeout=20)
+        assert r_past.status_code == 200
+        assert inv_today not in r_past.text
+        # only header line in body (1 line)
+        body = r_past.text.lstrip("\ufeff")
+        assert len(body.strip().splitlines()) == 1
+
+    def test_export_invalid_token_401(self):
+        r = requests.get(f"{API}/orders/export.csv?token=garbage.token.value")
+        assert r.status_code == 401
+
+
+class TestCustomerPayment:
+    @pytest.fixture
+    def cust_with_two_credit_orders(self, admin_headers):
+        # fresh customer
+        rc = requests.post(f"{API}/customers", headers=admin_headers,
+                           json={"name": f"TEST_PayCust_{int(time.time())}", "phone": "9000099000", "credit_limit": 50000})
+        assert rc.status_code == 200
+        cust = rc.json()
+        cid = cust["id"]
+        # pick a stocked product
+        prods = [p for p in requests.get(f"{API}/products", headers=admin_headers).json() if p.get("stock", 0) >= 5]
+        p = prods[0]
+        # Order A - oldest, credit, due 1000
+        coA = requests.post(f"{API}/pos/checkout", json={
+            "customer_id": cid,
+            "items": [{"product_id": p["id"], "quantity": 1, "price": 1000, "discount": 0}],
+            "payment_method": "credit",
+        }, headers=admin_headers)
+        assert coA.status_code == 200, coA.text
+        time.sleep(1.1)  # ensure different created_at
+        # Order B - later, credit, due 500
+        coB = requests.post(f"{API}/pos/checkout", json={
+            "customer_id": cid,
+            "items": [{"product_id": p["id"], "quantity": 1, "price": 500, "discount": 0}],
+            "payment_method": "credit",
+        }, headers=admin_headers)
+        assert coB.status_code == 200
+        yield {"cid": cid, "orderA": coA.json(), "orderB": coB.json()}
+        # cleanup: delete customer (orders remain but it's fine)
+        requests.delete(f"{API}/customers/{cid}", headers=admin_headers)
+
+    def test_negative_amount_400(self, admin_headers, cust_with_two_credit_orders):
+        cid = cust_with_two_credit_orders["cid"]
+        r = requests.post(f"{API}/customers/{cid}/payment", headers=admin_headers,
+                          json={"amount": -10, "method": "cash", "note": ""})
+        assert r.status_code == 400
+
+    def test_zero_amount_400(self, admin_headers, cust_with_two_credit_orders):
+        cid = cust_with_two_credit_orders["cid"]
+        r = requests.post(f"{API}/customers/{cid}/payment", headers=admin_headers,
+                          json={"amount": 0, "method": "cash", "note": ""})
+        assert r.status_code == 400
+
+    def test_nonexistent_customer_404(self, admin_headers):
+        r = requests.post(f"{API}/customers/does-not-exist/payment", headers=admin_headers,
+                          json={"amount": 100, "method": "cash"})
+        assert r.status_code == 404
+
+    def test_partial_payment_fifo(self, admin_headers, cust_with_two_credit_orders):
+        cid = cust_with_two_credit_orders["cid"]
+        oA = cust_with_two_credit_orders["orderA"]
+        oB = cust_with_two_credit_orders["orderB"]
+        total_due = round(oA["due_amount"] + oB["due_amount"], 2)
+        # initial balance must equal sum of dues
+        cust0 = next(c for c in requests.get(f"{API}/customers", headers=admin_headers).json() if c["id"] == cid)
+        assert round(cust0["current_balance"], 2) == total_due
+
+        # pay an amount strictly less than oA's due → A partially paid, B untouched
+        partial = round(oA["due_amount"] - 100, 2)
+        assert partial > 0
+        r = requests.post(f"{API}/customers/{cid}/payment", headers=admin_headers,
+                          json={"amount": partial, "method": "cash", "note": "TEST partial"})
+        assert r.status_code == 200, r.text
+        updated = r.json()
+        assert round(updated["current_balance"], 2) == round(total_due - partial, 2)
+
+        # fetch orders and check FIFO
+        ordsA = requests.get(f"{API}/orders/{oA['id']}", headers=admin_headers).json()
+        ordsB = requests.get(f"{API}/orders/{oB['id']}", headers=admin_headers).json()
+        assert round(ordsA["due_amount"], 2) == round(oA["due_amount"] - partial, 2)
+        assert round(ordsA["paid_amount"], 2) == partial
+        assert round(ordsB["due_amount"], 2) == round(oB["due_amount"], 2)  # untouched
+        assert round(ordsB["paid_amount"], 2) == 0.00
+
+    def test_full_payment_completes_non_delivery(self, admin_headers, cust_with_two_credit_orders):
+        cid = cust_with_two_credit_orders["cid"]
+        oA = cust_with_two_credit_orders["orderA"]
+        oB = cust_with_two_credit_orders["orderB"]
+        total_due = round(oA["due_amount"] + oB["due_amount"], 2)
+        # pay in full
+        r = requests.post(f"{API}/customers/{cid}/payment", headers=admin_headers,
+                          json={"amount": total_due, "method": "upi", "note": "TEST full"})
+        assert r.status_code == 200, r.text
+        updated = r.json()
+        assert round(updated["current_balance"], 2) == 0.00
+
+        ordsA = requests.get(f"{API}/orders/{oA['id']}", headers=admin_headers).json()
+        ordsB = requests.get(f"{API}/orders/{oB['id']}", headers=admin_headers).json()
+        assert round(ordsA["due_amount"], 2) == 0.00
+        assert round(ordsB["due_amount"], 2) == 0.00
+        # non-delivery → both auto-completed
+        assert ordsA["status"] == "completed"
+        assert ordsB["status"] == "completed"
+
+    def test_overpayment_negative_balance(self, admin_headers, cust_with_two_credit_orders):
+        cid = cust_with_two_credit_orders["cid"]
+        oA = cust_with_two_credit_orders["orderA"]
+        oB = cust_with_two_credit_orders["orderB"]
+        total_due = round(oA["due_amount"] + oB["due_amount"], 2)
+        overpay = total_due + 500
+        r = requests.post(f"{API}/customers/{cid}/payment", headers=admin_headers,
+                          json={"amount": overpay, "method": "cash"})
+        assert r.status_code == 200
+        assert round(r.json()["current_balance"], 2) == -500.00
+
+    def test_audit_log_written(self, admin_headers, cust_with_two_credit_orders):
+        cid = cust_with_two_credit_orders["cid"]
+        r = requests.post(f"{API}/customers/{cid}/payment", headers=admin_headers,
+                          json={"amount": 200, "method": "cash", "note": "audit-test"})
+        assert r.status_code == 200
+        time.sleep(0.5)
+        logs = requests.get(f"{API}/audit-logs?entity_type=customer&days=1&limit=500",
+                            headers=admin_headers).json()
+        actions = [log["action"] for log in logs if log["entity_id"] == cid]
+        assert "customer.payment" in actions
+
+    def test_payment_keeps_delivery_status(self, admin_headers):
+        # Create customer + delivery credit order
+        rc = requests.post(f"{API}/customers", headers=admin_headers,
+                           json={"name": f"TEST_PayDeliv_{int(time.time())}", "phone": "9111199111", "credit_limit": 50000})
+        cust = rc.json()
+        cid = cust["id"]
+        try:
+            prods = [p for p in requests.get(f"{API}/products", headers=admin_headers).json() if p.get("stock", 0) >= 1]
+            p = prods[0]
+            co = requests.post(f"{API}/pos/checkout", json={
+                "customer_id": cid,
+                "items": [{"product_id": p["id"], "quantity": 1, "price": 800, "discount": 0}],
+                "payment_method": "credit",
+                "is_delivery": True,
+                "delivery_address": "TEST 123 lane",
+            }, headers=admin_headers)
+            assert co.status_code == 200, co.text
+            order = co.json()
+            assert order["is_delivery"] is True
+            initial_status = order["status"]  # likely "pending"
+            order_due = round(order["due_amount"], 2)
+
+            r = requests.post(f"{API}/customers/{cid}/payment", headers=admin_headers,
+                              json={"amount": order_due, "method": "cash"})
+            assert r.status_code == 200
+            o2 = requests.get(f"{API}/orders/{order['id']}", headers=admin_headers).json()
+            assert round(o2["due_amount"], 2) == 0.00
+            # delivery status preserved (NOT auto-completed)
+            assert o2["status"] == initial_status, f"delivery status was changed: {initial_status}->{o2['status']}"
+            assert o2["status"] != "completed"
+        finally:
+            requests.delete(f"{API}/customers/{cid}", headers=admin_headers)

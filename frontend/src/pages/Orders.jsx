@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
-import { Search, FileText, IndianRupee, ArrowRight, XCircle, Truck } from "lucide-react";
+import { Search, FileText, IndianRupee, ArrowRight, XCircle, Truck, Download, Calendar as CalIcon, X as XIcon } from "lucide-react";
 import { toast } from "sonner";
-import { api, fmtINR, fmtDate } from "@/lib/api";
+import { api, fmtINR, fmtDate, API_BASE, tokenStore } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -35,6 +35,8 @@ export default function Orders() {
     const [list, setList] = useState([]);
     const [q, setQ] = useState("");
     const [status, setStatus] = useState("all");
+    const [fromDate, setFromDate] = useState("");
+    const [toDate, setToDate] = useState("");
     const [openInvoice, setOpenInvoice] = useState(null);
     const [cancelOrder, setCancelOrder] = useState(null);
     const [cancelReason, setCancelReason] = useState("");
@@ -44,10 +46,45 @@ export default function Orders() {
         const params = {};
         if (q) params.q = q;
         if (status !== "all") params.status_ = status;
+        if (fromDate) params.from_date = fromDate;
+        if (toDate) params.to_date = toDate;
         const { data } = await api.get("/orders", { params });
         setList(data);
     }
-    useEffect(() => { const t = setTimeout(load, 200); return () => clearTimeout(t); }, [q, status]);
+    useEffect(() => { const t = setTimeout(load, 200); return () => clearTimeout(t); }, [q, status, fromDate, toDate]);
+
+    function setRange(days) {
+        const today = new Date();
+        const to = today.toISOString().slice(0, 10);
+        const from = new Date(today.getTime() - days * 86400000).toISOString().slice(0, 10);
+        setFromDate(from);
+        setToDate(to);
+    }
+    function setThisMonth() {
+        const d = new Date();
+        const from = new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10);
+        const to = d.toISOString().slice(0, 10);
+        setFromDate(from);
+        setToDate(to);
+    }
+    function clearRange() {
+        setFromDate("");
+        setToDate("");
+    }
+
+    function exportCsv() {
+        const token = tokenStore.get();
+        const params = new URLSearchParams({ token });
+        if (q) params.set("q", q);
+        if (status !== "all") params.set("status_", status);
+        if (fromDate) params.set("from_date", fromDate);
+        if (toDate) params.set("to_date", toDate);
+        const url = `${API_BASE}/orders/export.csv?${params.toString()}`;
+        window.open(url, "_blank");
+        toast.success(`Exporting ${list.length} orders…`);
+    }
+
+    const totalRevenue = list.reduce((s, o) => o.status === "cancelled" ? s : s + (o.total || 0), 0);
 
     async function changeStatus(o, next) {
         try {
@@ -81,7 +118,53 @@ export default function Orders() {
                 <div>
                     <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">Sales</div>
                     <h1 className="font-heading text-3xl font-semibold tracking-tight mt-1">Orders & Invoices</h1>
-                    <p className="text-sm text-muted-foreground mt-1">{list.length} records</p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                        {list.length} records · revenue <span className="text-primary font-semibold">{fmtINR(totalRevenue)}</span>
+                    </p>
+                </div>
+                <Button onClick={exportCsv} variant="outline" className="gap-2 border-border" data-testid="orders-export-btn">
+                    <Download size={14} /> Export CSV
+                </Button>
+            </div>
+
+            {/* date range + presets */}
+            <div className="panel p-4 flex flex-wrap items-end gap-3" data-testid="orders-date-filter">
+                <div className="flex items-end gap-2">
+                    <div className="space-y-1">
+                        <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">From</Label>
+                        <div className="relative">
+                            <CalIcon size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                            <Input
+                                type="date" value={fromDate}
+                                onChange={(e) => setFromDate(e.target.value)}
+                                className="h-9 pl-8 bg-muted/30 border-border w-44"
+                                data-testid="orders-from-date"
+                            />
+                        </div>
+                    </div>
+                    <div className="space-y-1">
+                        <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">To</Label>
+                        <div className="relative">
+                            <CalIcon size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                            <Input
+                                type="date" value={toDate}
+                                onChange={(e) => setToDate(e.target.value)}
+                                className="h-9 pl-8 bg-muted/30 border-border w-44"
+                                data-testid="orders-to-date"
+                            />
+                        </div>
+                    </div>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                    <Button size="sm" variant="outline" className="h-9 border-border" onClick={() => setRange(0)} data-testid="orders-range-today">Today</Button>
+                    <Button size="sm" variant="outline" className="h-9 border-border" onClick={() => setRange(7)}>7 days</Button>
+                    <Button size="sm" variant="outline" className="h-9 border-border" onClick={() => setRange(30)}>30 days</Button>
+                    <Button size="sm" variant="outline" className="h-9 border-border" onClick={setThisMonth}>This month</Button>
+                    {(fromDate || toDate) && (
+                        <Button size="sm" variant="ghost" className="h-9 text-muted-foreground hover:text-destructive" onClick={clearRange} data-testid="orders-range-clear">
+                            <XIcon size={13} /> Clear
+                        </Button>
+                    )}
                 </div>
             </div>
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Plus, Search, Pencil, Trash2, Phone, MapPin, Mail, IndianRupee, Loader2 } from "lucide-react";
+import { Plus, Search, Pencil, Trash2, Phone, MapPin, Mail, IndianRupee, Loader2, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { api, fmtINR, fmtDate } from "@/lib/api";
 import { Input } from "@/components/ui/input";
@@ -13,6 +13,9 @@ import {
 import {
     Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription,
 } from "@/components/ui/sheet";
+import {
+    Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
+} from "@/components/ui/select";
 import { useAuth } from "@/context/AuthContext";
 
 const EMPTY = { name: "", phone: "", email: "", address: "", gstin: "", credit_limit: 0 };
@@ -28,6 +31,11 @@ export default function Customers() {
     const [saving, setSaving] = useState(false);
     const [drawerCustomer, setDrawerCustomer] = useState(null);
     const [drawerOrders, setDrawerOrders] = useState([]);
+    const [payCustomer, setPayCustomer] = useState(null);
+    const [payAmount, setPayAmount] = useState("");
+    const [payMethod, setPayMethod] = useState("cash");
+    const [payNote, setPayNote] = useState("");
+    const [paying, setPaying] = useState(false);
 
     async function load() {
         const params = q ? { q } : {};
@@ -61,6 +69,39 @@ export default function Customers() {
         setDrawerCustomer(c);
         const { data } = await api.get(`/customers/${c.id}/orders`);
         setDrawerOrders(data);
+    }
+
+    function openPay(c) {
+        setPayCustomer(c);
+        setPayAmount(c.current_balance > 0 ? String(c.current_balance) : "");
+        setPayMethod("cash");
+        setPayNote("");
+    }
+
+    async function recordPayment() {
+        if (!payCustomer) return;
+        const amt = Number(payAmount);
+        if (!amt || amt <= 0) return toast.error("Enter a valid amount");
+        setPaying(true);
+        try {
+            const { data } = await api.post(`/customers/${payCustomer.id}/payment`, {
+                amount: amt, method: payMethod, note: payNote.trim(),
+            });
+            toast.success(`Recorded ₹${amt.toFixed(2)} from ${payCustomer.name}`);
+            setList((rows) => rows.map((r) => (r.id === payCustomer.id ? data : r)));
+            if (drawerCustomer && drawerCustomer.id === payCustomer.id) {
+                setDrawerCustomer(data);
+                const { data: orders } = await api.get(`/customers/${payCustomer.id}/orders`);
+                setDrawerOrders(orders);
+            }
+            setPayCustomer(null);
+            setPayAmount("");
+            setPayNote("");
+        } catch (e) {
+            toast.error(e?.response?.data?.detail || "Payment failed");
+        } finally {
+            setPaying(false);
+        }
     }
 
     return (
@@ -112,6 +153,11 @@ export default function Customers() {
                                     </td>
                                     <td className="px-5 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                                         <div className="inline-flex gap-1">
+                                            {c.current_balance > 0 && (
+                                                <Button size="sm" variant="ghost" className="gap-1 text-primary hover:text-primary" onClick={() => openPay(c)} data-testid={`customer-pay-${c.id}`}>
+                                                    <Wallet size={14} /> Pay
+                                                </Button>
+                                            )}
                                             <Button size="icon" variant="ghost" onClick={() => openEdit(c)}><Pencil size={14} /></Button>
                                             {isAdmin && <Button size="icon" variant="ghost" onClick={() => remove(c)} className="text-destructive hover:text-destructive"><Trash2 size={14} /></Button>}
                                         </div>
@@ -186,6 +232,11 @@ export default function Customers() {
                                     <div className="font-heading text-xl font-semibold mt-1 text-amber-400">{fmtINR(drawerCustomer.current_balance)}</div>
                                 </div>
                             </div>
+                            {drawerCustomer.current_balance > 0 && (
+                                <Button onClick={() => openPay(drawerCustomer)} className="w-full bg-primary hover:bg-primary/90 text-primary-foreground gap-2" data-testid="customer-drawer-pay-btn">
+                                    <Wallet size={14} /> Record payment ({fmtINR(drawerCustomer.current_balance)})
+                                </Button>
+                            )}
                             {drawerCustomer.address && (
                                 <div className="text-sm text-muted-foreground flex items-start gap-2"><MapPin size={14} className="mt-0.5" />{drawerCustomer.address}</div>
                             )}
@@ -213,6 +264,85 @@ export default function Customers() {
                     )}
                 </SheetContent>
             </Sheet>
+
+            <Dialog open={!!payCustomer} onOpenChange={(v) => !v && setPayCustomer(null)}>
+                <DialogContent className="bg-card border-border" data-testid="customer-pay-dialog">
+                    <DialogHeader>
+                        <DialogTitle className="font-heading flex items-center gap-2">
+                            <Wallet size={18} className="text-primary" /> Record payment
+                        </DialogTitle>
+                        <DialogDescription>
+                            Money received from <span className="font-medium text-foreground">{payCustomer?.name}</span>.
+                            We'll reduce their outstanding balance and apply it to their oldest unpaid invoices first (FIFO).
+                        </DialogDescription>
+                    </DialogHeader>
+                    {payCustomer && (
+                        <div className="space-y-4">
+                            <div className="rounded-md bg-muted/40 border border-border p-3 grid grid-cols-2 gap-3 text-sm">
+                                <div>
+                                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Outstanding</div>
+                                    <div className="font-heading text-xl font-semibold mt-0.5 text-amber-400">{fmtINR(payCustomer.current_balance)}</div>
+                                </div>
+                                <div>
+                                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Credit Limit</div>
+                                    <div className="font-heading text-xl font-semibold mt-0.5">{fmtINR(payCustomer.credit_limit)}</div>
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className="space-y-1.5">
+                                    <Label>Amount received</Label>
+                                    <Input
+                                        type="number" autoFocus
+                                        value={payAmount}
+                                        onChange={(e) => setPayAmount(e.target.value)}
+                                        className="bg-muted/30 border-border text-base font-medium"
+                                        data-testid="customer-pay-amount"
+                                    />
+                                </div>
+                                <div className="space-y-1.5">
+                                    <Label>Method</Label>
+                                    <Select value={payMethod} onValueChange={setPayMethod}>
+                                        <SelectTrigger className="bg-muted/30 border-border" data-testid="customer-pay-method"><SelectValue /></SelectTrigger>
+                                        <SelectContent className="bg-popover border-border">
+                                            <SelectItem value="cash">Cash</SelectItem>
+                                            <SelectItem value="upi">UPI</SelectItem>
+                                            <SelectItem value="bank">Bank Transfer</SelectItem>
+                                            <SelectItem value="cheque">Cheque</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label>Note (optional)</Label>
+                                <Textarea
+                                    rows={2}
+                                    value={payNote}
+                                    onChange={(e) => setPayNote(e.target.value)}
+                                    placeholder="e.g. Cheque #12345, partial payment…"
+                                    className="bg-muted/30 border-border"
+                                />
+                            </div>
+                            {Number(payAmount) > payCustomer.current_balance && (
+                                <div className="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-2.5 py-1.5">
+                                    Amount exceeds outstanding by {fmtINR(Number(payAmount) - payCustomer.current_balance)}. Balance will go negative (advance payment).
+                                </div>
+                            )}
+                        </div>
+                    )}
+                    <DialogFooter>
+                        <Button variant="ghost" onClick={() => setPayCustomer(null)}>Cancel</Button>
+                        <Button
+                            onClick={recordPayment}
+                            disabled={paying || !payAmount}
+                            className="bg-primary hover:bg-primary/90 text-primary-foreground gap-2"
+                            data-testid="customer-pay-confirm-btn"
+                        >
+                            {paying && <Loader2 size={14} className="animate-spin" />}
+                            <Wallet size={14} /> Record {payAmount ? `₹${Number(payAmount).toFixed(2)}` : "payment"}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }
