@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
     Search, Plus, Minus, Trash2, ShoppingCart, User, Banknote,
     CreditCard, Smartphone, FileCheck2, Building2, X, Receipt as ReceiptIcon,
-    Package, Loader2, Tag,
+    Package, Loader2, Tag, Truck,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api, fmtINR } from "@/lib/api";
@@ -11,6 +11,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Textarea } from "@/components/ui/textarea";
 import InvoiceModal from "@/components/InvoiceModal";
 
 const PAY_METHODS = [
@@ -36,6 +38,9 @@ export default function POS() {
     const [paymentMethod, setPaymentMethod] = useState("cash");
     const [paidAmount, setPaidAmount] = useState("");
     const [notes, setNotes] = useState("");
+    const [isDelivery, setIsDelivery] = useState(false);
+    const [deliveryAddress, setDeliveryAddress] = useState("");
+    const [deliveryCharges, setDeliveryCharges] = useState("");
     const [submitting, setSubmitting] = useState(false);
     const [invoice, setInvoice] = useState(null);
 
@@ -103,12 +108,14 @@ export default function POS() {
         const disc = discountType === "percent"
             ? subtotal * (Number(discountValue) || 0) / 100
             : Math.min(Number(discountValue) || 0, subtotal);
-        const total = Math.max(0, subtotal - disc);
-        return { subtotal, disc, total };
-    }, [cart, discountType, discountValue]);
+        const delivery = isDelivery ? Math.max(0, Number(deliveryCharges) || 0) : 0;
+        const total = Math.max(0, subtotal - disc + delivery);
+        return { subtotal, disc, delivery, total };
+    }, [cart, discountType, discountValue, isDelivery, deliveryCharges]);
 
     async function checkout() {
         if (!cart.length) return toast.error("Cart is empty");
+        if (isDelivery && !deliveryAddress.trim()) return toast.error("Delivery address is required");
         setSubmitting(true);
         try {
             const payload = {
@@ -123,6 +130,9 @@ export default function POS() {
                 payment_method: paymentMethod,
                 paid_amount: Number(paidAmount) || 0,
                 notes,
+                is_delivery: isDelivery,
+                delivery_address: isDelivery ? deliveryAddress.trim() : "",
+                delivery_charges: isDelivery ? (Number(deliveryCharges) || 0) : 0,
             };
             const { data } = await api.post("/pos/checkout", payload);
             toast.success(`Invoice ${data.invoice_no} created`);
@@ -132,6 +142,9 @@ export default function POS() {
             setDiscountValue(0);
             setPaidAmount("");
             setNotes("");
+            setIsDelivery(false);
+            setDeliveryAddress("");
+            setDeliveryCharges("");
             loadProducts();
         } catch (e) {
             toast.error(e?.response?.data?.detail || "Checkout failed");
@@ -340,9 +353,48 @@ export default function POS() {
                         <div className="space-y-1.5 text-sm">
                             <div className="flex justify-between text-muted-foreground"><span>Subtotal</span><span>{fmtINR(totals.subtotal)}</span></div>
                             <div className="flex justify-between text-muted-foreground"><span>Discount</span><span>-{fmtINR(totals.disc)}</span></div>
+                            {isDelivery && (
+                                <div className="flex justify-between text-secondary"><span>Delivery charges</span><span>+{fmtINR(totals.delivery)}</span></div>
+                            )}
                             <div className="flex justify-between font-heading text-lg font-semibold pt-1.5 border-t border-border" data-testid="pos-cart-total">
                                 <span>Total</span><span className="text-primary">{fmtINR(totals.total)}</span>
                             </div>
+                        </div>
+
+                        <div className="rounded-md border border-border bg-muted/20 p-3 space-y-2">
+                            <label className="flex items-center gap-2 cursor-pointer">
+                                <Checkbox
+                                    checked={isDelivery}
+                                    onCheckedChange={(v) => setIsDelivery(!!v)}
+                                    data-testid="pos-delivery-checkbox"
+                                />
+                                <span className="text-sm font-medium flex items-center gap-1.5">
+                                    <Truck size={14} className="text-secondary" /> Home delivery
+                                </span>
+                            </label>
+                            {isDelivery && (
+                                <div className="space-y-2 pt-1 animate-in-up">
+                                    <Textarea
+                                        rows={2}
+                                        value={deliveryAddress}
+                                        onChange={(e) => setDeliveryAddress(e.target.value)}
+                                        placeholder="Delivery address"
+                                        className="bg-card border-border text-sm"
+                                        data-testid="pos-delivery-address"
+                                    />
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-xs uppercase tracking-wider text-muted-foreground shrink-0">Charges</span>
+                                        <Input
+                                            type="number"
+                                            value={deliveryCharges}
+                                            onChange={(e) => setDeliveryCharges(e.target.value)}
+                                            placeholder="0"
+                                            className="h-8 bg-card border-border text-sm"
+                                            data-testid="pos-delivery-charges"
+                                        />
+                                    </div>
+                                </div>
+                            )}
                         </div>
 
                         <div className="grid grid-cols-5 gap-1.5">

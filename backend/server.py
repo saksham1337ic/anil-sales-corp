@@ -185,6 +185,9 @@ class CheckoutIn(BaseModel):
     payment_method: Literal["cash", "upi", "bank", "cheque", "credit"] = "cash"
     paid_amount: float = 0.0
     notes: Optional[str] = ""
+    is_delivery: bool = False
+    delivery_address: Optional[str] = ""
+    delivery_charges: float = 0.0
 
 
 class OrderItemOut(BaseModel):
@@ -219,6 +222,11 @@ class OrderOut(BaseModel):
     created_by_name: str
     notes: str
     created_at: str
+    is_delivery: bool = False
+    delivery_address: str = ""
+    delivery_charges: float = 0.0
+    cancelled_at: Optional[str] = None
+    cancel_reason: Optional[str] = None
 
 
 class OrderStatusUpdate(BaseModel):
@@ -539,7 +547,8 @@ async def checkout(body: CheckoutIn, user: dict = Depends(get_current_user)):
         disc_amount = body.discount_value
     disc_amount = max(0.0, min(disc_amount, subtotal))
 
-    total = round(subtotal - disc_amount + tax_total, 2)
+    delivery_charges = max(0.0, float(body.delivery_charges or 0.0)) if body.is_delivery else 0.0
+    total = round(subtotal - disc_amount + tax_total + delivery_charges, 2)
     paid = body.paid_amount
     if body.payment_method != "credit":
         # assume full paid unless explicitly set (cash/upi/bank/cheque always settle)
@@ -581,6 +590,11 @@ async def checkout(body: CheckoutIn, user: dict = Depends(get_current_user)):
         "created_by_name": user["name"],
         "notes": body.notes or "",
         "created_at": now_iso(),
+        "is_delivery": bool(body.is_delivery),
+        "delivery_address": (body.delivery_address or "") if body.is_delivery else "",
+        "delivery_charges": round(delivery_charges, 2),
+        "cancelled_at": None,
+        "cancel_reason": None,
     }
     await db.orders.insert_one(order_doc)
 
@@ -672,6 +686,61 @@ async def record_payment(oid: str, body: PaymentRecordIn, user: dict = Depends(g
     return order
 
 
+class CancelOrderIn(BaseModel):
+    reason: Optional[str] = ""
+
+
+@api.post("/orders/{oid}/cancel", response_model=OrderOut)
+async def cancel_order(oid: str, body: CancelOrderIn, user: dict = Depends(get_current_user)):
+    order = await db.orders.find_one({"id": oid}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order["status"] == "cancelled":
+        raise HTTPException(status_code=400, detail="Order already cancelled")
+
+    # Restock items
+    for it in order.get("items", []):
+        await db.products.update_one(
+            {"id": it["product_id"]},
+            {"$inc": {"stock": it["quantity"]}, "$set": {"updated_at": now_iso()}},
+        )
+        await db.stock_movements.insert_one({
+            "id": new_id(),
+            "product_id": it["product_id"],
+            "product_name": it["name"],
+            "type": "cancellation",
+            "quantity": it["quantity"],
+            "note": f"Cancelled invoice {order['invoice_no']}",
+            "user_id": user["id"],
+            "user_name": user["name"],
+            "created_at": now_iso(),
+        })
+
+    # Reverse customer balance impact
+    if order.get("customer_id") and order.get("due_amount", 0) > 0:
+        await db.customers.update_one(
+            {"id": order["customer_id"]},
+            {"$inc": {"current_balance": -order["due_amount"]}},
+        )
+
+    # Update order
+    cancelled_at = now_iso()
+    await db.orders.update_one(
+        {"id": oid},
+        {"$set": {
+            "status": "cancelled",
+            "cancelled_at": cancelled_at,
+            "cancel_reason": body.reason or "",
+        }},
+    )
+    order.update({
+        "status": "cancelled",
+        "cancelled_at": cancelled_at,
+        "cancel_reason": body.reason or "",
+    })
+    return order
+
+
 # ---------------------------------------------------------------------------
 # Invoice PDF
 # ---------------------------------------------------------------------------
@@ -723,13 +792,23 @@ def build_invoice_pdf(order: dict) -> bytes:
                        style=TableStyle([("LINEBELOW", (0, 0), (-1, -1), 1, colors.HexColor("#10B981"))])))
     story.append(Spacer(1, 10))
 
-    # Bill to
-    bill_to = Table([[
-        Paragraph(f"<b>BILL TO</b><br/><font size=10>{order['customer_name']}</font>"
-                  f"<br/><font size=9 color='#475569'>{order.get('customer_phone','')}</font>", styles["Normal"]),
-        Paragraph(f"<para align=right><b>PAYMENT</b><br/><font size=10>{order['payment_method'].upper()}</font>"
-                  f"<br/><font size=9 color='#475569'>Status: {order['status'].title()}</font></para>", styles["Normal"]),
-    ]], colWidths=[110 * mm, 60 * mm])
+    # Bill to + delivery
+    if order.get("is_delivery") and order.get("delivery_address"):
+        bill_to = Table([[
+            Paragraph(f"<b>BILL TO</b><br/><font size=10>{order['customer_name']}</font>"
+                      f"<br/><font size=9 color='#475569'>{order.get('customer_phone','')}</font>"
+                      f"<br/><br/><b>DELIVERY ADDRESS</b><br/><font size=9 color='#475569'>{order['delivery_address']}</font>", styles["Normal"]),
+            Paragraph(f"<para align=right><b>PAYMENT</b><br/><font size=10>{order['payment_method'].upper()}</font>"
+                      f"<br/><font size=9 color='#475569'>Status: {order['status'].title()}</font>"
+                      f"<br/><br/><font size=9 color='#0EA5E9'><b>DELIVERY ORDER</b></font></para>", styles["Normal"]),
+        ]], colWidths=[110 * mm, 60 * mm])
+    else:
+        bill_to = Table([[
+            Paragraph(f"<b>BILL TO</b><br/><font size=10>{order['customer_name']}</font>"
+                      f"<br/><font size=9 color='#475569'>{order.get('customer_phone','')}</font>", styles["Normal"]),
+            Paragraph(f"<para align=right><b>PAYMENT</b><br/><font size=10>{order['payment_method'].upper()}</font>"
+                      f"<br/><font size=9 color='#475569'>Status: {order['status'].title()}</font></para>", styles["Normal"]),
+        ]], colWidths=[110 * mm, 60 * mm])
     story.append(bill_to)
     story.append(Spacer(1, 14))
 
@@ -762,18 +841,23 @@ def build_invoice_pdf(order: dict) -> bytes:
         ["Subtotal", f"₹{order['subtotal']:.2f}"],
         [f"Discount ({order['discount_type']})", f"-₹{order['discount_amount']:.2f}"],
         ["Tax", f"₹{order['tax']:.2f}"],
+    ]
+    if order.get("is_delivery") and order.get("delivery_charges", 0) > 0:
+        tot_rows.append(["Delivery charges", f"₹{order['delivery_charges']:.2f}"])
+    tot_rows += [
         ["TOTAL", f"₹{order['total']:.2f}"],
         ["Paid", f"₹{order['paid_amount']:.2f}"],
         ["Due", f"₹{order['due_amount']:.2f}"],
     ]
+    total_row_idx = next(i for i, r in enumerate(tot_rows) if r[0] == "TOTAL")
     tot_tbl = Table(tot_rows, colWidths=[40 * mm, 30 * mm], hAlign="RIGHT")
     tot_tbl.setStyle(TableStyle([
         ("FONTSIZE", (0, 0), (-1, -1), 10),
         ("ALIGN", (1, 0), (1, -1), "RIGHT"),
-        ("LINEABOVE", (0, 3), (-1, 3), 0.5, colors.HexColor("#CBD5E1")),
-        ("FONTNAME", (0, 3), (-1, 3), "Helvetica-Bold"),
-        ("TEXTCOLOR", (0, 3), (-1, 3), colors.HexColor("#059669")),
-        ("FONTSIZE", (0, 3), (-1, 3), 12),
+        ("LINEABOVE", (0, total_row_idx), (-1, total_row_idx), 0.5, colors.HexColor("#CBD5E1")),
+        ("FONTNAME", (0, total_row_idx), (-1, total_row_idx), "Helvetica-Bold"),
+        ("TEXTCOLOR", (0, total_row_idx), (-1, total_row_idx), colors.HexColor("#059669")),
+        ("FONTSIZE", (0, total_row_idx), (-1, total_row_idx), 12),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
     ]))
     story.append(tot_tbl)
@@ -837,14 +921,18 @@ async def dashboard_summary(user: dict = Depends(get_current_user)):
     today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
     month_start_iso, _ = _day_bounds(30)
 
-    # Today's revenue
+    # Today's revenue (exclude cancelled)
     today_orders = await db.orders.find(
-        {"created_at": {"$gte": today_start}}, {"_id": 0, "total": 1, "paid_amount": 1}
+        {"created_at": {"$gte": today_start}, "status": {"$ne": "cancelled"}},
+        {"_id": 0, "total": 1, "paid_amount": 1}
     ).to_list(5000)
     today_revenue = sum(o.get("total", 0) for o in today_orders)
 
-    # Total revenue
-    all_orders = await db.orders.find({}, {"_id": 0, "total": 1, "created_at": 1, "status": 1}).to_list(100000)
+    # Total revenue (exclude cancelled)
+    all_orders = await db.orders.find(
+        {"status": {"$ne": "cancelled"}},
+        {"_id": 0, "total": 1, "created_at": 1, "status": 1}
+    ).to_list(100000)
     total_revenue = sum(o.get("total", 0) for o in all_orders)
 
     # Pending orders
@@ -886,7 +974,9 @@ async def dashboard_summary(user: dict = Depends(get_current_user)):
 @api.get("/analytics/overview")
 async def analytics_overview(days: int = 30, user: dict = Depends(require_admin)):
     start = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    orders = await db.orders.find({"created_at": {"$gte": start}}, {"_id": 0}).to_list(100000)
+    orders = await db.orders.find(
+        {"created_at": {"$gte": start}, "status": {"$ne": "cancelled"}}, {"_id": 0}
+    ).to_list(100000)
 
     # Revenue trend (daily)
     trend = {}
@@ -958,6 +1048,128 @@ async def analytics_overview(days: int = 30, user: dict = Depends(require_admin)
 
 
 # ---------------------------------------------------------------------------
+# Tasks (Today's tasks)
+# ---------------------------------------------------------------------------
+class TaskCreate(BaseModel):
+    title: str
+    description: Optional[str] = ""
+    priority: Literal["low", "normal", "high"] = "normal"
+    due_date: Optional[str] = None  # YYYY-MM-DD
+    assigned_to: Optional[str] = None  # user id; None = self
+
+
+class TaskOut(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    title: str
+    description: str = ""
+    priority: str
+    due_date: Optional[str] = None
+    status: Literal["pending", "done"]
+    assigned_to: str
+    assigned_to_name: str
+    created_by: str
+    created_by_name: str
+    created_at: str
+    completed_at: Optional[str] = None
+
+
+class TaskUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    priority: Optional[Literal["low", "normal", "high"]] = None
+    due_date: Optional[str] = None
+    status: Optional[Literal["pending", "done"]] = None
+    assigned_to: Optional[str] = None
+
+
+@api.get("/tasks", response_model=List[TaskOut])
+async def list_tasks(
+    scope: Literal["all", "mine", "today"] = "today",
+    status_: Optional[str] = None,
+    user: dict = Depends(get_current_user),
+):
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    filt: dict = {}
+    if scope == "mine":
+        filt["assigned_to"] = user["id"]
+    elif scope == "today":
+        filt["$or"] = [
+            {"due_date": today},
+            {"due_date": None, "status": "pending"},
+            {"due_date": {"$lt": today}, "status": "pending"},
+        ]
+    if status_ in ("pending", "done"):
+        # combine with existing filter
+        if "$or" in filt:
+            filt = {"$and": [filt, {"status": status_}]}
+        else:
+            filt["status"] = status_
+    rows = await db.tasks.find(filt, {"_id": 0}).sort([("status", 1), ("due_date", 1), ("created_at", -1)]).to_list(500)
+    return rows
+
+
+@api.post("/tasks", response_model=TaskOut)
+async def create_task(body: TaskCreate, user: dict = Depends(get_current_user)):
+    assigned_id = body.assigned_to or user["id"]
+    assigned_user = await db.users.find_one({"id": assigned_id}, {"_id": 0, "name": 1})
+    if not assigned_user:
+        raise HTTPException(status_code=400, detail="Assigned user not found")
+    doc = {
+        "id": new_id(),
+        "title": body.title.strip(),
+        "description": body.description or "",
+        "priority": body.priority,
+        "due_date": body.due_date,
+        "status": "pending",
+        "assigned_to": assigned_id,
+        "assigned_to_name": assigned_user["name"],
+        "created_by": user["id"],
+        "created_by_name": user["name"],
+        "created_at": now_iso(),
+        "completed_at": None,
+    }
+    if not doc["title"]:
+        raise HTTPException(status_code=400, detail="Title is required")
+    await db.tasks.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.patch("/tasks/{tid}", response_model=TaskOut)
+async def update_task(tid: str, body: TaskUpdate, user: dict = Depends(get_current_user)):
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No changes")
+    if "status" in updates:
+        updates["completed_at"] = now_iso() if updates["status"] == "done" else None
+    if "assigned_to" in updates:
+        u = await db.users.find_one({"id": updates["assigned_to"]}, {"_id": 0, "name": 1})
+        if not u:
+            raise HTTPException(status_code=400, detail="Assigned user not found")
+        updates["assigned_to_name"] = u["name"]
+    res = await db.tasks.find_one_and_update(
+        {"id": tid}, {"$set": updates}, return_document=True
+    )
+    if not res:
+        raise HTTPException(status_code=404, detail="Task not found")
+    res.pop("_id", None)
+    return res
+
+
+@api.delete("/tasks/{tid}")
+async def delete_task(tid: str, user: dict = Depends(get_current_user)):
+    task = await db.tasks.find_one({"id": tid}, {"_id": 0})
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    # only creator or admin can delete
+    if task["created_by"] != user["id"] and user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Only creator or admin can delete")
+    await db.tasks.delete_one({"id": tid})
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
 # Seed + startup
 # ---------------------------------------------------------------------------
 DEFAULT_CATEGORIES = [
@@ -1017,6 +1229,9 @@ async def ensure_indexes():
     await db.orders.create_index("invoice_no", unique=True)
     await db.orders.create_index("created_at")
     await db.categories.create_index("name", unique=True)
+    await db.tasks.create_index("id", unique=True)
+    await db.tasks.create_index("assigned_to")
+    await db.tasks.create_index("status")
 
 
 async def seed():

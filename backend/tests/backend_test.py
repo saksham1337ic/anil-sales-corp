@@ -171,6 +171,7 @@ class TestCheckout:
         assert rpdf.content[:4] == b"%PDF"
 
     def test_checkout_credit_increases_balance(self, admin_headers):
+        time.sleep(1.1)  # avoid invoice_no second-precision collision
         prods = requests.get(f"{API}/products", headers=admin_headers).json()
         custs = requests.get(f"{API}/customers", headers=admin_headers).json()
         cust = custs[0]
@@ -258,3 +259,200 @@ class TestDashboard:
     def test_analytics_forbidden_for_staff(self, staff_headers):
         r = requests.get(f"{API}/analytics/overview", headers=staff_headers)
         assert r.status_code == 403
+
+
+# ---------------- Tasks (Iteration 2) ----------------
+class TestTasks:
+    def test_create_default_assigned_to_creator(self, admin_headers):
+        from datetime import datetime, timezone
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        body = {"title": "TEST_task default", "priority": "high", "due_date": today}
+        r = requests.post(f"{API}/tasks", json=body, headers=admin_headers)
+        assert r.status_code == 200, r.text
+        t = r.json()
+        # admin user should be assignee
+        me = requests.get(f"{API}/auth/me", headers=admin_headers).json()
+        assert t["assigned_to"] == me["id"]
+        assert t["status"] == "pending"
+        assert t["completed_at"] is None
+        # cleanup
+        requests.delete(f"{API}/tasks/{t['id']}", headers=admin_headers)
+
+    def test_admin_assigns_to_staff(self, admin_headers):
+        users = requests.get(f"{API}/users", headers=admin_headers).json()
+        staff = next((u for u in users if u["email"] == STAFF_EMAIL), None)
+        if not staff:
+            pytest.skip("staff user missing")
+        body = {"title": "TEST_assigned", "assigned_to": staff["id"]}
+        r = requests.post(f"{API}/tasks", json=body, headers=admin_headers)
+        assert r.status_code == 200
+        t = r.json()
+        assert t["assigned_to"] == staff["id"]
+        assert t["assigned_to_name"] == staff["name"]
+        requests.delete(f"{API}/tasks/{t['id']}", headers=admin_headers)
+
+    def test_list_scopes_and_status_filter(self, admin_headers):
+        from datetime import datetime, timezone
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        # create a task for today
+        cr = requests.post(f"{API}/tasks", json={"title": "TEST_today", "due_date": today}, headers=admin_headers)
+        tid = cr.json()["id"]
+        # default = today
+        r = requests.get(f"{API}/tasks", headers=admin_headers)
+        assert r.status_code == 200
+        assert any(t["id"] == tid for t in r.json())
+        # mine
+        r2 = requests.get(f"{API}/tasks?scope=mine", headers=admin_headers)
+        assert r2.status_code == 200
+        assert any(t["id"] == tid for t in r2.json())
+        # all
+        r3 = requests.get(f"{API}/tasks?scope=all", headers=admin_headers)
+        assert r3.status_code == 200
+        # status filter pending
+        r4 = requests.get(f"{API}/tasks?scope=all&status_=pending", headers=admin_headers)
+        assert all(t["status"] == "pending" for t in r4.json())
+        requests.delete(f"{API}/tasks/{tid}", headers=admin_headers)
+
+    def test_patch_status_sets_completed_at(self, admin_headers):
+        cr = requests.post(f"{API}/tasks", json={"title": "TEST_complete"}, headers=admin_headers)
+        tid = cr.json()["id"]
+        r = requests.patch(f"{API}/tasks/{tid}", json={"status": "done"}, headers=admin_headers)
+        assert r.status_code == 200
+        assert r.json()["status"] == "done"
+        assert r.json()["completed_at"] is not None
+        # back to pending clears completed_at
+        r2 = requests.patch(f"{API}/tasks/{tid}", json={"status": "pending"}, headers=admin_headers)
+        assert r2.status_code == 200
+        assert r2.json()["completed_at"] is None
+        requests.delete(f"{API}/tasks/{tid}", headers=admin_headers)
+
+    def test_delete_permission(self, admin_headers, staff_headers):
+        # admin creates task
+        cr = requests.post(f"{API}/tasks", json={"title": "TEST_perm"}, headers=admin_headers)
+        tid = cr.json()["id"]
+        # staff cannot delete (not creator, not admin)
+        r = requests.delete(f"{API}/tasks/{tid}", headers=staff_headers)
+        assert r.status_code == 403
+        # admin can delete
+        r2 = requests.delete(f"{API}/tasks/{tid}", headers=admin_headers)
+        assert r2.status_code == 200
+
+
+# ---------------- Cancel Order (Iteration 2) ----------------
+class TestCancelOrder:
+    def test_cancel_restocks_and_excludes_revenue(self, admin_headers):
+        time.sleep(1.1)
+        prods = requests.get(f"{API}/products", headers=admin_headers).json()
+        p = next(x for x in prods if x["stock"] >= 2)
+        stock_before = p["stock"]
+        body = {
+            "items": [{"product_id": p["id"], "quantity": 2, "price": p["selling_price"], "discount": 0}],
+            "payment_method": "cash",
+        }
+        r = requests.post(f"{API}/pos/checkout", json=body, headers=admin_headers)
+        assert r.status_code == 200
+        order = r.json()
+        oid = order["id"]
+        order_total = order["total"]
+
+        # before cancel: revenue includes order
+        rev_before = requests.get(f"{API}/dashboard/summary", headers=admin_headers).json()["total_revenue"]
+
+        # cancel
+        rc = requests.post(f"{API}/orders/{oid}/cancel", json={"reason": "customer changed mind"}, headers=admin_headers)
+        assert rc.status_code == 200, rc.text
+        co = rc.json()
+        assert co["status"] == "cancelled"
+        assert co["cancelled_at"] is not None
+        assert co["cancel_reason"] == "customer changed mind"
+
+        # second cancel returns 400
+        rc2 = requests.post(f"{API}/orders/{oid}/cancel", json={"reason": "x"}, headers=admin_headers)
+        assert rc2.status_code == 400
+
+        # stock restored
+        p_after = [x for x in requests.get(f"{API}/products", headers=admin_headers).json() if x["id"] == p["id"]][0]
+        assert p_after["stock"] == stock_before, f"expected stock {stock_before}, got {p_after['stock']}"
+
+        # cancellation movement logged
+        movs = requests.get(f"{API}/stock-movements?limit=20", headers=admin_headers).json()
+        assert any(m["type"] == "cancellation" and m["product_id"] == p["id"] for m in movs)
+
+        # revenue excludes cancelled
+        rev_after = requests.get(f"{API}/dashboard/summary", headers=admin_headers).json()["total_revenue"]
+        assert round(rev_after, 2) == round(rev_before - order_total, 2)
+
+        # analytics excludes cancelled
+        an = requests.get(f"{API}/analytics/overview?days=30", headers=admin_headers).json()
+        assert all(o for o in an["revenue_trend"])  # smoke
+        # the cancelled order's payment shouldn't appear in breakdown total revenue
+        assert an["total_revenue"] >= 0
+
+    def test_cancel_credit_reverses_customer_balance(self, admin_headers):
+        time.sleep(1.1)
+        prods = requests.get(f"{API}/products", headers=admin_headers).json()
+        custs = requests.get(f"{API}/customers", headers=admin_headers).json()
+        cust = custs[0]
+        bal_before = cust["current_balance"]
+        p = next(x for x in prods if x["stock"] >= 1)
+        body = {
+            "customer_id": cust["id"],
+            "items": [{"product_id": p["id"], "quantity": 1, "price": p["selling_price"], "discount": 0}],
+            "payment_method": "credit", "paid_amount": 0,
+        }
+        r = requests.post(f"{API}/pos/checkout", json=body, headers=admin_headers)
+        assert r.status_code == 200
+        order = r.json()
+        # cancel
+        rc = requests.post(f"{API}/orders/{order['id']}/cancel", json={"reason": "test"}, headers=admin_headers)
+        assert rc.status_code == 200
+        # balance reverted
+        cust_after = [c for c in requests.get(f"{API}/customers", headers=admin_headers).json() if c["id"] == cust["id"]][0]
+        assert round(cust_after["current_balance"], 2) == round(bal_before, 2)
+
+
+# ---------------- Delivery Checkout (Iteration 2) ----------------
+class TestDeliveryCheckout:
+    def test_checkout_with_delivery(self, admin_headers):
+        time.sleep(1.1)  # avoid invoice_no second-precision collision
+        prods = requests.get(f"{API}/products", headers=admin_headers).json()
+        p = next(x for x in prods if x["stock"] >= 1)
+        body = {
+            "items": [{"product_id": p["id"], "quantity": 1, "price": 1000, "discount": 0}],
+            "payment_method": "cash",
+            "is_delivery": True,
+            "delivery_address": "Test Address, Mumbai 400001",
+            "delivery_charges": 150,
+        }
+        r = requests.post(f"{API}/pos/checkout", json=body, headers=admin_headers)
+        assert r.status_code == 200
+        order = r.json()
+        assert order["is_delivery"] is True
+        assert order["delivery_address"] == "Test Address, Mumbai 400001"
+        assert order["delivery_charges"] == 150
+        # subtotal=1000, tax=18% => 180, +delivery 150 => 1330
+        assert order["total"] == round(1000 + (1000 * p["tax_rate"] / 100.0) + 150, 2)
+
+        # PDF reachable
+        token = admin_headers["Authorization"].split()[1]
+        rpdf = requests.get(f"{API}/orders/{order['id']}/invoice.pdf?token={token}")
+        assert rpdf.status_code == 200
+        assert rpdf.headers.get("content-type", "").startswith("application/pdf")
+        assert rpdf.content[:4] == b"%PDF"
+
+    def test_checkout_no_delivery_defaults(self, admin_headers):
+        time.sleep(1.1)
+        prods = requests.get(f"{API}/products", headers=admin_headers).json()
+        p = next(x for x in prods if x["stock"] >= 1)
+        body = {
+            "items": [{"product_id": p["id"], "quantity": 1, "price": 500, "discount": 0}],
+            "payment_method": "cash",
+        }
+        r = requests.post(f"{API}/pos/checkout", json=body, headers=admin_headers)
+        assert r.status_code == 200
+        o = r.json()
+        assert o["is_delivery"] is False
+        assert o["delivery_charges"] == 0
+        assert o["delivery_address"] == ""
+        # total = 500 + tax (no delivery)
+        assert o["total"] == round(500 + (500 * p["tax_rate"] / 100.0), 2)

@@ -1,11 +1,16 @@
 import React, { useEffect, useState } from "react";
-import { Search, FileText, IndianRupee, ArrowRight } from "lucide-react";
+import { Search, FileText, IndianRupee, ArrowRight, XCircle, Truck } from "lucide-react";
 import { toast } from "sonner";
 import { api, fmtINR, fmtDate } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import {
+    Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
+} from "@/components/ui/dialog";
 import {
     Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from "@/components/ui/select";
@@ -31,6 +36,9 @@ export default function Orders() {
     const [q, setQ] = useState("");
     const [status, setStatus] = useState("all");
     const [openInvoice, setOpenInvoice] = useState(null);
+    const [cancelOrder, setCancelOrder] = useState(null);
+    const [cancelReason, setCancelReason] = useState("");
+    const [cancelling, setCancelling] = useState(false);
 
     async function load() {
         const params = {};
@@ -48,6 +56,22 @@ export default function Orders() {
             setList((rows) => rows.map((r) => (r.id === o.id ? data : r)));
         } catch (e) {
             toast.error(e?.response?.data?.detail || "Update failed");
+        }
+    }
+
+    async function doCancel() {
+        if (!cancelOrder) return;
+        setCancelling(true);
+        try {
+            const { data } = await api.post(`/orders/${cancelOrder.id}/cancel`, { reason: cancelReason });
+            toast.success(`Order ${cancelOrder.invoice_no} cancelled · stock restored`);
+            setList((rows) => rows.map((r) => (r.id === cancelOrder.id ? data : r)));
+            setCancelOrder(null);
+            setCancelReason("");
+        } catch (e) {
+            toast.error(e?.response?.data?.detail || "Cancel failed");
+        } finally {
+            setCancelling(false);
         }
     }
 
@@ -98,7 +122,10 @@ export default function Orders() {
                                     <td className="px-5 py-3 font-mono text-xs font-medium">{o.invoice_no}</td>
                                     <td className="px-3 py-3 text-muted-foreground">{fmtDate(o.created_at)}</td>
                                     <td className="px-3 py-3">
-                                        <div className="font-medium">{o.customer_name}</div>
+                                        <div className="font-medium flex items-center gap-1.5">
+                                            {o.is_delivery && <Truck size={12} className="text-secondary" />}
+                                            {o.customer_name}
+                                        </div>
                                         <div className="text-xs text-muted-foreground">{o.customer_phone || "—"}</div>
                                     </td>
                                     <td className="px-3 py-3 text-muted-foreground">{o.items.length} items</td>
@@ -122,6 +149,16 @@ export default function Orders() {
                                                     Complete <ArrowRight size={12} />
                                                 </Button>
                                             )}
+                                            {o.status !== "cancelled" && o.status !== "completed" && (
+                                                <Button size="sm" variant="ghost" className="gap-1 text-destructive hover:text-destructive" onClick={() => setCancelOrder(o)} data-testid={`order-cancel-${o.invoice_no}`}>
+                                                    <XCircle size={14} /> Cancel
+                                                </Button>
+                                            )}
+                                            {o.status === "completed" && (
+                                                <Button size="sm" variant="ghost" className="gap-1 text-muted-foreground hover:text-destructive" onClick={() => setCancelOrder(o)} data-testid={`order-cancel-${o.invoice_no}`}>
+                                                    <XCircle size={14} /> Cancel
+                                                </Button>
+                                            )}
                                         </div>
                                     </td>
                                 </tr>
@@ -135,6 +172,50 @@ export default function Orders() {
             </div>
 
             <InvoiceModal order={openInvoice} onClose={() => setOpenInvoice(null)} />
+
+            <Dialog open={!!cancelOrder} onOpenChange={(v) => !v && setCancelOrder(null)}>
+                <DialogContent className="bg-card border-border" data-testid="cancel-order-dialog">
+                    <DialogHeader>
+                        <DialogTitle className="font-heading flex items-center gap-2">
+                            <XCircle size={18} className="text-destructive" />
+                            Cancel order {cancelOrder?.invoice_no}
+                        </DialogTitle>
+                        <DialogDescription>
+                            Stock for all line items will be restored. Revenue and analytics will exclude this order.
+                            {cancelOrder?.due_amount > 0 && " Customer's outstanding balance will be reversed."}
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-3">
+                        <div className="rounded-md bg-muted/40 border border-border p-3 text-sm">
+                            <div className="flex justify-between"><span className="text-muted-foreground">Customer</span><span className="font-medium">{cancelOrder?.customer_name}</span></div>
+                            <div className="flex justify-between"><span className="text-muted-foreground">Items</span><span>{cancelOrder?.items?.length}</span></div>
+                            <div className="flex justify-between"><span className="text-muted-foreground">Total</span><span className="font-medium">{fmtINR(cancelOrder?.total || 0)}</span></div>
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label>Reason (optional)</Label>
+                            <Textarea
+                                rows={2}
+                                value={cancelReason}
+                                onChange={(e) => setCancelReason(e.target.value)}
+                                placeholder="e.g. Customer changed mind, pricing error…"
+                                className="bg-muted/30 border-border"
+                                data-testid="cancel-reason-input"
+                            />
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="ghost" onClick={() => setCancelOrder(null)}>Keep order</Button>
+                        <Button
+                            onClick={doCancel}
+                            disabled={cancelling}
+                            className="bg-destructive hover:bg-destructive/90 text-destructive-foreground gap-1.5"
+                            data-testid="cancel-confirm-btn"
+                        >
+                            <XCircle size={14} /> {cancelling ? "Cancelling…" : "Cancel order & restock"}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }

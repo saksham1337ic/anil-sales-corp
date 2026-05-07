@@ -9,6 +9,7 @@ import Products from "@/pages/Products";
 import Customers from "@/pages/Customers";
 import Orders from "@/pages/Orders";
 import Analytics from "@/pages/Analytics";
+import Tasks from "@/pages/Tasks";
 import Layout from "@/components/Layout";
 import "@/App.css";
 
@@ -42,6 +43,7 @@ function AppRoutes() {
                 <Route path="/products" element={<Products />} />
                 <Route path="/customers" element={<Customers />} />
                 <Route path="/orders" element={<Orders />} />
+                <Route path="/tasks" element={<Tasks />} />
                 <Route
                     path="/analytics"
                     element={

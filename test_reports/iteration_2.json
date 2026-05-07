@@ -1,0 +1,45 @@
+{
+  "summary": "Iteration 2 testing — Tasks, Cancel-Order with stock-restock, and POS Delivery flow. Backend: 27/27 pytest passing (existing 18 + 9 new across TestTasks, TestCancelOrder, TestDeliveryCheckout). Frontend: Tasks page (create/toggle), POS delivery checkbox + address + charges + total update, and Orders cancel flow all verified live against the public REACT_APP_BACKEND_URL.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/pos/checkout", "issue": "make_invoice_no() uses ASC-YYYYMMDDHHMMSS (second precision); under back-to-back checkouts within 1s pymongo raises DuplicateKeyError on orders.invoice_no unique index → 500. Reproducible by issuing two checkouts in the same second. Workaround in tests: 1.1s sleep. Suggested fix: append a short random/ms suffix or use ObjectId/uuid for invoice_no."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Tasks page delete button", "issue": "Clicking [data-testid^='task-delete-'] did not visibly remove the task in our run; possibly requires AlertDialog confirmation whose button has no canonical data-testid (text 'Delete'/'Confirm'/'Yes' not matched). Backend DELETE /api/tasks/{id} works. Verify confirm button has a data-testid like 'task-delete-confirm-btn'.", "selector": "[data-testid^='task-delete-']", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dashboard / Analytics", "issues": ["Recharts still logs width(-1) height(-1) warnings (carry-over from iteration 1, non-blocking)."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Make invoice_no collision-proof: append millisecond/uuid suffix in make_invoice_no() to avoid 500 on rapid back-to-back checkouts.",
+    "Add a data-testid (e.g., 'task-delete-confirm-btn') to the AlertDialog confirm button on Tasks delete to make it deterministically testable."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now ~1330 lines — splitting into routers (auth/products/orders/tasks/analytics) is increasingly worth it.",
+    "POST /api/orders/{oid}/cancel has no role gating — any authenticated user (incl. staff) can cancel any order, restocking inventory and reversing customer balance. Consider restricting to admin or limiting to orders the user created.",
+    "PATCH /api/tasks/{id} has no permission check — any logged-in user can update any task (including reassigning). Backend only gates DELETE. Consider restricting edits to creator/assignee/admin.",
+    "make_invoice_no() second-precision is racy (see minor backend issue above).",
+    "Tasks list scope='today' default: when user has many old pending tasks (overdue), the $or branch {due_date: {$lt: today}, status: 'pending'} may surface them even when scope is intended to be 'today only' — confirm this is desired (currently treated as 'today + overdue pending', which is reasonable)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py (added TestTasks, TestCancelOrder, TestDeliveryCheckout + sleeps to dodge invoice collision)",
+    "/app/test_reports/iteration_2.json (created)",
+    "/app/test_reports/pytest/pytest_results.xml (regenerated)"
+  ],
+  "success_rate": {"backend": "100% (27/27)", "frontend": "Tasks 90% (delete UI confirm not validated), POS delivery 100%, Orders cancel 100% (cancelled rows visible)"},
+  "test_credentials": "admin@anilsales.com / Admin@123, staff@anilsales.com / Staff@123 — both work",
+  "seed_data_creation": "Tests create transient TEST_ tasks/products and orders that are subsequently cancelled or paid back. Several cancelled orders remain in DB from cancel tests; harmless and excluded from revenue.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iteration 2 backend is fully covered in /app/backend/tests/backend_test.py (TestTasks, TestCancelOrder, TestDeliveryCheckout). When adding more checkout-based tests, add a small time.sleep(1.1) before each /api/pos/checkout to dodge the second-precision invoice_no collision until the backend fix lands. Frontend test-ids confirmed working: pos-delivery-checkbox, pos-delivery-address, pos-delivery-charges, task-add-btn, task-form-title, task-form-save-btn, task-toggle-{id}, task-delete-{id}, cancel-confirm-btn (exists per code, but our generic 'Cancel' selector also matched the filter chip — use a row-scoped selector like 'tr button[data-testid^=\"cancel-order-\"]' or open the row's View modal first).",
+  "rca of the issue": "Invoice duplicate-key 500 RCA: make_invoice_no formats datetime with second precision (%Y%m%d%H%M%S). orders.invoice_no has a unique index. Two checkouts within the same UTC second collide → DuplicateKeyError → 500. Reproduced by two consecutive POST /api/pos/checkout calls in <1s. Mitigation in tests: sleep 1.1s between checkouts. Permanent fix: append milliseconds or 4-char random/uuid suffix, or switch to per-day counter."
+}

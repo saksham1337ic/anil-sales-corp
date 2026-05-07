@@ -67,6 +67,12 @@ export default function InvoiceModal({ order, onClose }) {
                             <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500 font-semibold">Bill To</div>
                             <div className="text-base font-medium mt-1">{order.customer_name}</div>
                             <div className="text-sm text-slate-600">{order.customer_phone || "—"}</div>
+                            {order.is_delivery && order.delivery_address && (
+                                <div className="mt-3">
+                                    <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500 font-semibold">Delivery Address</div>
+                                    <div className="text-sm text-slate-700 mt-1 leading-relaxed whitespace-pre-line">{order.delivery_address}</div>
+                                </div>
+                            )}
                         </div>
                         <div className="text-right">
                             <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500 font-semibold">Payment</div>
@@ -76,10 +82,19 @@ export default function InvoiceModal({ order, onClose }) {
                                     ? "bg-emerald-100 text-emerald-700 border border-emerald-200"
                                     : order.status === "pending"
                                     ? "bg-amber-100 text-amber-700 border border-amber-200"
+                                    : order.status === "cancelled"
+                                    ? "bg-rose-100 text-rose-700 border border-rose-200"
                                     : "bg-slate-100 text-slate-700 border border-slate-200"
                             }>
                                 {order.status}
                             </Badge>
+                            {order.is_delivery && (
+                                <div className="mt-3">
+                                    <div className="inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.18em] font-semibold text-sky-600 bg-sky-50 border border-sky-200 px-2 py-1 rounded">
+                                        Delivery Order
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </div>
 
@@ -117,6 +132,9 @@ export default function InvoiceModal({ order, onClose }) {
                             <div className="flex justify-between text-slate-600"><span>Subtotal</span><span>{fmtINR(order.subtotal)}</span></div>
                             <div className="flex justify-between text-slate-600"><span>Discount ({order.discount_type})</span><span>-{fmtINR(order.discount_amount)}</span></div>
                             <div className="flex justify-between text-slate-600"><span>Tax</span><span>{fmtINR(order.tax)}</span></div>
+                            {order.is_delivery && order.delivery_charges > 0 && (
+                                <div className="flex justify-between text-sky-700"><span>Delivery charges</span><span>{fmtINR(order.delivery_charges)}</span></div>
+                            )}
                             <div className="flex justify-between font-semibold text-lg pt-2 border-t border-slate-200 text-emerald-700">
                                 <span>TOTAL</span><span>{fmtINR(order.total)}</span>
                             </div>
